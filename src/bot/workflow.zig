@@ -220,7 +220,7 @@ pub fn handleAdminAction(
 
 fn sendStepNotification(
     allocator: std.mem.Allocator,
-    db: *sqlite.Db,
+    _: *sqlite.Db,
     tg: *tg_client.TelegramClient,
     admin_chat_id: i64,
     project_id: i64,

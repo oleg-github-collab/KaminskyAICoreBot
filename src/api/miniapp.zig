@@ -1528,7 +1528,7 @@ pub fn handleGlossaryDiff(req: *httpz.Request, res: *httpz.Response) !void {
     _ = parseProjectAccess(req, res, user) orelse return;
     const a = app();
 
-    const query = req.query() orelse {
+    const query = req.query() catch {
         jsonError(res, 400, "Параметри a та b обов'язкові.");
         return;
     };
