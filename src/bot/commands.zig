@@ -222,8 +222,17 @@ pub fn handleCallback(
         try handleTeamInfo(allocator, db, tg, chat_id, user, bot_username);
     } else if (std.mem.eql(u8, data, "proj:pricing")) {
         try handlePricing(allocator, db, tg, chat_id, user);
+    } else if (std.mem.eql(u8, data, "proj:files")) {
+        try handleFilesList(allocator, db, tg, chat_id, user);
     } else if (std.mem.eql(u8, data, "proj:glossary")) {
         try handleGlossaryRequest(allocator, db, tg, chat_id, user, admin_chat_id);
+    } else if (std.mem.eql(u8, data, "proj:pay")) {
+        try handlePayment(allocator, db, tg, chat_id, user, admin_chat_id);
+    } else if (std.mem.eql(u8, data, "proj:back_to_project")) {
+        const us = try flow.getUserState(db, user.id);
+        if (us.project_id) |pid| {
+            try selectProject(allocator, db, tg, chat_id, user, pid);
+        }
     }
 
     _ = data_dir;
@@ -385,22 +394,197 @@ fn handlePricing(
     const us = try flow.getUserState(db, user.id);
     const pid = us.project_id orelse return;
 
-    const total_cents = try @import("../db/files_db.zig").totalPriceForProject(db, pid);
-    var price_buf: [16]u8 = undefined;
-    const price_str = @import("../processing/pricing.zig").formatEuro(&price_buf, total_cents);
+    const db_files = @import("../db/files_db.zig");
+    const pricing = @import("../processing/pricing.zig");
 
-    var buf: [256]u8 = undefined;
+    const total_cents = try db_files.totalPriceForProject(db, pid);
+    const source_stats = try db_files.countByProjectCategory(db, pid, "source");
+    const ref_stats = try db_files.countByProjectCategory(db, pid, "reference");
+
+    var price_buf: [16]u8 = undefined;
+    const price_str = pricing.formatEuro(&price_buf, total_cents);
+
+    var buf: [512]u8 = undefined;
     const text = std.fmt.bufPrint(&buf,
         \\<b>Розрахунок вартості</b>
+        \\
+        \\Вихідних файлів: {d}
+        \\Референсних файлів: {d}
         \\
         \\Текстові файли: €0.58 за 1800 символів
         \\PDF файли: €0.69 за сторінку
         \\
         \\<b>Загальна вартість: €{s}</b>
-    , .{price_str}) catch "Pricing info";
+    , .{ source_stats.count, ref_stats.count, price_str }) catch "Pricing info";
 
-    const resp = try tg.sendMessage(chat_id, text, null);
+    if (total_cents > 0) {
+        const kb = try tg_client.buildKeyboard(allocator, &.{
+            &.{
+                .{ .text = "💳 Оплатити", .callback_data = "proj:pay" },
+                .{ .text = "🔙 Назад", .callback_data = "proj:back_to_project" },
+            },
+        });
+        defer allocator.free(kb);
+        const resp = try tg.sendMessage(chat_id, text, kb);
+        allocator.free(resp);
+    } else {
+        const resp = try tg.sendMessage(chat_id, text, null);
+        allocator.free(resp);
+    }
+}
+
+fn handleFilesList(
+    allocator: std.mem.Allocator,
+    db: *sqlite.Db,
+    tg: *tg_client.TelegramClient,
+    chat_id: i64,
+    user: *const db_users.UserRecord,
+) !void {
+    const us = try flow.getUserState(db, user.id);
+    const pid = us.project_id orelse return;
+
+    const db_files = @import("../db/files_db.zig");
+    const pricing = @import("../processing/pricing.zig");
+
+    const source_stats = try db_files.countByProjectCategory(db, pid, "source");
+    const ref_stats = try db_files.countByProjectCategory(db, pid, "reference");
+
+    var src_price_buf: [16]u8 = undefined;
+    const src_price = pricing.formatEuro(&src_price_buf, source_stats.total_price_cents);
+    var ref_price_buf: [16]u8 = undefined;
+    const ref_price = pricing.formatEuro(&ref_price_buf, ref_stats.total_price_cents);
+
+    var buf: [512]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf,
+        \\<b>Файли проєкту</b>
+        \\
+        \\<b>Вихідні:</b> {d} файл(ів)
+        \\  Символів: {d} | Сторінок: {d}
+        \\  Вартість: €{s}
+        \\
+        \\<b>Референси:</b> {d} файл(ів)
+        \\  Символів: {d} | Сторінок: {d}
+        \\  Вартість: €{s}
+    , .{
+        source_stats.count, source_stats.total_chars, source_stats.total_pages, src_price,
+        ref_stats.count, ref_stats.total_chars, ref_stats.total_pages, ref_price,
+    }) catch "Files info";
+
+    const kb = try projectMenuKeyboard(allocator, pid);
+    defer allocator.free(kb);
+    const resp = try tg.sendMessage(chat_id, text, kb);
     allocator.free(resp);
+}
+
+fn handlePayment(
+    allocator: std.mem.Allocator,
+    db: *sqlite.Db,
+    tg: *tg_client.TelegramClient,
+    chat_id: i64,
+    user: *const db_users.UserRecord,
+    admin_chat_id: i64,
+) !void {
+    const us = try flow.getUserState(db, user.id);
+    const pid = us.project_id orelse return;
+    const project = try db_projects.getById(db, pid) orelse return;
+
+    const db_files = @import("../db/files_db.zig");
+    const pricing = @import("../processing/pricing.zig");
+    const handler = @import("../webhook/handler.zig");
+    const a = &handler.app_global;
+
+    const amount_cents = try db_files.totalPriceForProject(db, pid);
+    if (amount_cents <= 0) {
+        const resp = try tg.sendMessage(chat_id, "Для цього проєкту ще немає файлів для оплати.", null);
+        allocator.free(resp);
+        return;
+    }
+
+    if (a.config.stripe_secret_key.len == 0) {
+        // Notify admin for manual invoice
+        var notify_buf: [256]u8 = undefined;
+        const notify = std.fmt.bufPrint(&notify_buf,
+            "Запит на оплату від <b>{s}</b> для проєкту <b>{s}</b>",
+            .{ user.first_name, project.name },
+        ) catch "Payment request";
+        const n_resp = try tg.sendMessage(admin_chat_id, notify, null);
+        allocator.free(n_resp);
+
+        const resp = try tg.sendMessage(chat_id,
+            "Запит на оплату передано. Наш спеціаліст зв'яжеться з вами.",
+            null,
+        );
+        allocator.free(resp);
+        return;
+    }
+
+    // Create Stripe Checkout Session
+    const miniapp = @import("../api/miniapp.zig");
+    const session = miniapp.createStripeSession(
+        allocator,
+        a.config.stripe_secret_key,
+        amount_cents,
+        project.name,
+        a.config.mini_app_url,
+        pid,
+        user.telegram_id,
+    ) catch {
+        const resp = try tg.sendMessage(chat_id, "Помилка створення платежу. Спробуйте через панель.", null);
+        allocator.free(resp);
+        return;
+    };
+
+    // Save invoice
+    var inv_stmt = try db.prepare(
+        \\INSERT INTO invoices
+        \\  (project_id, user_id, amount_cents, currency, description, stripe_session_id, stripe_payment_url, status, created_at)
+        \\VALUES (?, ?, ?, 'EUR', ?, ?, ?, 'pending', ?)
+    );
+    defer inv_stmt.deinit();
+    try inv_stmt.bindInt(1, pid);
+    try inv_stmt.bindInt(2, user.id);
+    try inv_stmt.bindInt(3, amount_cents);
+    var desc_buf: [256]u8 = undefined;
+    const desc = std.fmt.bufPrint(&desc_buf, "Project {s}", .{project.name}) catch "Payment";
+    try inv_stmt.bindText(4, desc);
+    try inv_stmt.bindText(5, session.id);
+    try inv_stmt.bindText(6, session.url);
+    try inv_stmt.bindInt(7, std.time.timestamp());
+    try inv_stmt.exec();
+
+    var price_buf: [16]u8 = undefined;
+    const price_str = pricing.formatEuro(&price_buf, amount_cents);
+
+    var msg_buf: [512]u8 = undefined;
+    const msg_text = std.fmt.bufPrint(&msg_buf,
+        \\<b>Рахунок на оплату</b>
+        \\
+        \\Проєкт: <b>{s}</b>
+        \\Сума: <b>€{s}</b>
+        \\
+        \\Натисніть кнопку нижче для оплати:
+    , .{ project.name, price_str }) catch "Invoice created";
+
+    const kb = try tg_client.buildKeyboard(allocator, &.{
+        &.{
+            .{ .text = "💳 Перейти до оплати", .url = session.url },
+        },
+        &.{
+            .{ .text = "🔙 Назад до проєкту", .callback_data = "proj:back_to_project" },
+        },
+    });
+    defer allocator.free(kb);
+    const resp = try tg.sendMessage(chat_id, msg_text, kb);
+    allocator.free(resp);
+
+    // Notify admin
+    var admin_buf: [256]u8 = undefined;
+    const admin_text = std.fmt.bufPrint(&admin_buf,
+        "Створено рахунок: <b>{s}</b> — €{s} від {s}",
+        .{ project.name, price_str, user.first_name },
+    ) catch "New invoice";
+    const admin_resp = try tg.sendMessage(admin_chat_id, admin_text, null);
+    allocator.free(admin_resp);
 }
 
 fn handleGlossaryRequest(

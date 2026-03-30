@@ -31,10 +31,9 @@ RUN git clone --depth 1 --branch zig-0.14 https://github.com/karlseguin/http.zig
 # Copy build files first (Docker layer caching)
 COPY build.zig build.zig.zon ./
 
-# Copy source code
+# Copy source code (web/ is inside src/web/, used via @embedFile)
 COPY src/ src/
 COPY sql/ sql/
-COPY web/ web/
 
 # Build release binary
 RUN zig build -Doptimize=ReleaseSafe 2>&1 || \

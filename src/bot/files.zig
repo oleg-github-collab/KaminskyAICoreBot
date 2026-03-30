@@ -25,6 +25,17 @@ pub fn handleFileMessage(
     const mime = tg_types.mimeType(msg);
     const fsize = tg_types.mediaFileSize(msg) orelse 0;
 
+    // Check Telegram Bot API file size limit (20 MB)
+    if (fsize > 20 * 1024 * 1024) {
+        const resp = try tg.sendMessage(
+            msg.chat.id,
+            "Файл завеликий (понад 20 МБ). Telegram обмежує розмір файлів для ботів.\n\nБудь ласка, завантажте файл через панель управління (кнопка «Панель»).",
+            null,
+        );
+        allocator.free(resp);
+        return;
+    }
+
     // 1. Get file info from Telegram
     const file_resp = try tg.getFile(fid);
     defer allocator.free(file_resp);
@@ -44,7 +55,11 @@ pub fn handleFileMessage(
     } else |_| {}
 
     if (tg_file_path.len == 0) {
-        const resp = try tg.sendMessage(msg.chat.id, "Не вдалося отримати файл. Спробуйте ще раз.", null);
+        const resp = try tg.sendMessage(
+            msg.chat.id,
+            "Не вдалося отримати файл. Можливо, він перевищує ліміт Telegram (20 МБ).\n\nСпробуйте завантажити через панель управління.",
+            null,
+        );
         allocator.free(resp);
         return;
     }

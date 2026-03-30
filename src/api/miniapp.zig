@@ -41,7 +41,7 @@ const ParsedInitData = struct {
     data_check_string: []const u8,
 };
 
-const StripeSession = struct {
+pub const StripeSession = struct {
     id: []const u8,
     url: []const u8,
 };
@@ -412,6 +412,19 @@ fn approvedGlossaryCount(db: *sqlite.Db, project_id: i64) !i64 {
         return stmt.columnInt(0);
     }
     return 0;
+}
+
+/// Public wrapper for bot commands to create Stripe sessions
+pub fn createStripeSession(
+    allocator: std.mem.Allocator,
+    secret_key: []const u8,
+    amount_cents: i64,
+    project_name: []const u8,
+    mini_app_url: []const u8,
+    project_id: i64,
+    user_telegram_id: i64,
+) !StripeSession {
+    return createStripeCheckoutSession(allocator, secret_key, amount_cents, project_name, mini_app_url, project_id, user_telegram_id);
 }
 
 fn createStripeCheckoutSession(
