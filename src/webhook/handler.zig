@@ -8,6 +8,7 @@ const flow = @import("../bot/flow.zig");
 const commands = @import("../bot/commands.zig");
 const relay = @import("../bot/relay.zig");
 const files_mod = @import("../bot/files.zig");
+const workflow = @import("../bot/workflow.zig");
 const msgs = @import("../bot/messages_ua.zig");
 const config_mod = @import("../config.zig");
 
@@ -105,9 +106,13 @@ fn handleMessage(a: *App, msg: *const tg_types.Message) !void {
                 try handleCreateProject(a, msg, &user, text);
             }
         },
-        .uploading_source, .uploading_reference => {
+        .uploading_source, .uploading_reference, .uploading_instructions => {
             if (tg_types.fileId(msg) != null) {
-                const category: []const u8 = if (user_state.state == .uploading_source) "source" else "reference";
+                const category: []const u8 = switch (user_state.state) {
+                    .uploading_source => "source",
+                    .uploading_instructions => "instructions",
+                    else => "reference",
+                };
                 try files_mod.handleFileMessage(
                     a.allocator, &a.db, &a.tg, msg, &user,
                     user_state.project_id orelse return,
@@ -353,6 +358,14 @@ fn handleStripeImpl(body: []const u8) !void {
                     null,
                 );
                 a.allocator.free(cr);
+            }
+
+            // Initialize admin workflow (5-step process)
+            if (metadata.project_id) |pid_str| {
+                const pid = std.fmt.parseInt(i64, pid_str, 10) catch return;
+                workflow.initWorkflow(a.allocator, &a.db, &a.tg, pid, a.config.admin_chat_id) catch |err| {
+                    std.log.err("Failed to init workflow for project {d}: {}", .{ pid, err });
+                };
             }
         }
     }

@@ -11,6 +11,7 @@ pub const State = enum {
     uploading_reference,
     chatting,
     awaiting_payment,
+    uploading_instructions,
 
     pub fn fromString(s: []const u8) State {
         const map = .{
@@ -22,6 +23,7 @@ pub const State = enum {
             .{ "uploading_reference", .uploading_reference },
             .{ "chatting", .chatting },
             .{ "awaiting_payment", .awaiting_payment },
+            .{ "uploading_instructions", .uploading_instructions },
         };
         inline for (map) |entry| {
             if (std.mem.eql(u8, s, entry[0])) return entry[1];
@@ -39,6 +41,7 @@ pub const State = enum {
             .uploading_reference => "uploading_reference",
             .chatting => "chatting",
             .awaiting_payment => "awaiting_payment",
+            .uploading_instructions => "uploading_instructions",
         };
     }
 };

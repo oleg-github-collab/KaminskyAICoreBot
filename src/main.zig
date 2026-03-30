@@ -107,6 +107,9 @@ pub fn main() !void {
     router.get("/app/components/glossary.js", serveGlossaryJS, .{});
     router.get("/app/components/pricing.js", servePricingJS, .{});
     router.get("/app/components/messages.js", serveMessagesJS, .{});
+    router.get("/app/components/glossary-versions.js", serveGlossaryVersionsJS, .{});
+    router.get("/app/components/settings.js", serveSettingsJS, .{});
+    router.get("/app/lib/auth.js", serveAuthJS, .{});
 
     // REST API for Mini App
     router.get("/api/health", handler.handleHealth, .{});
@@ -125,9 +128,19 @@ pub fn main() !void {
     router.get("/api/projects/:project_id/glossary/export", miniapp_api.handleExportGlossary, .{});
     router.post("/api/projects/:project_id/glossary/sync", miniapp_api.handleSyncDeepL, .{});
     router.get("/api/projects/:project_id/messages", miniapp_api.handleMessages, .{});
+    router.post("/api/projects/:project_id/messages", miniapp_api.handleSendMessage, .{});
+    router.get("/api/projects/:project_id/messages/stream", miniapp_api.handleMessageStream, .{});
     router.get("/api/projects/:project_id/pricing", miniapp_api.handlePricing, .{});
     router.get("/api/projects/:project_id/invoices", miniapp_api.handleListInvoices, .{});
     router.post("/api/projects/:project_id/invoices", miniapp_api.handleCreateInvoice, .{});
+    router.delete("/api/projects/:project_id", miniapp_api.handleDeleteProject, .{});
+    router.get("/api/projects/:project_id/glossary/versions", miniapp_api.handleListGlossaryVersions, .{});
+    router.get("/api/projects/:project_id/glossary/versions/:version_id", miniapp_api.handleGetGlossaryVersion, .{});
+    router.get("/api/projects/:project_id/glossary/diff", miniapp_api.handleGlossaryDiff, .{});
+    router.get("/api/projects/:project_id/settings", miniapp_api.handleGetSettings, .{});
+    router.post("/api/projects/:project_id/settings", miniapp_api.handleUpdateSettings, .{});
+    router.get("/api/projects/:project_id/workflow", miniapp_api.handleWorkflowStatus, .{});
+    router.post("/api/auth/session", miniapp_api.handleCreateSession, .{});
 
     std.log.info("Server starting on 0.0.0.0:{d}...", .{config.port});
     try server.listen();
@@ -183,4 +196,19 @@ fn serveMessagesJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
     res.body = @embedFile("web/components/messages.js");
+}
+fn serveGlossaryVersionsJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/glossary-versions.js");
+}
+fn serveSettingsJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/settings.js");
+}
+fn serveAuthJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/lib/auth.js");
 }

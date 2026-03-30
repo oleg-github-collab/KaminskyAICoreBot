@@ -19,7 +19,7 @@ pub fn ensureDirectories(data_dir: []const u8) !void {
 
 /// Create project-specific subdirectories
 pub fn createProjectDirs(data_dir: []const u8, project_id: i64) !void {
-    const categories = [_][]const u8{ "source", "reference", "glossary", "translated", "document", "media" };
+    const categories = [_][]const u8{ "source", "reference", "glossary", "translated", "document", "media", "instructions" };
 
     // Create project root
     var proj_buf: [512]u8 = undefined;

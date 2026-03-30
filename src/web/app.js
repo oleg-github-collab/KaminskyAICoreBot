@@ -3,15 +3,27 @@ const App = {
     currentView: 'projects',
     currentProject: null,
     isAdmin: false,
+    isDesktop: false,
 
     init() {
-        if (this.tg) {
+        if (this.tg && this.tg.initData) {
             this.tg.ready();
             this.tg.expand();
             this.tg.enableClosingConfirmation();
             this.isAdmin = !!(this.tg.initDataUnsafe && this.tg.initDataUnsafe.user &&
                 this.tg.initDataUnsafe.user.id && this.tg.initDataUnsafe.start_param === 'admin');
         }
+
+        // Desktop detection
+        this.isDesktop = typeof Auth !== 'undefined' && Auth.isDesktop();
+        if (this.isDesktop) {
+            document.body.classList.add('desktop');
+            // Auto-create session if we have TMA auth
+            if (this.tg && this.tg.initData && !Auth.getToken()) {
+                Auth.createSession();
+            }
+        }
+
         this.buildNav();
         this.navigate('projects');
     },
@@ -23,6 +35,8 @@ const App = {
             { id: 'files', label: 'Файли', icon: '📄' },
             { id: 'pricing', label: 'Вартість', icon: '💰' },
             { id: 'glossary', label: 'Глосарій', icon: '📋' },
+            { id: 'versions', label: 'Версії', icon: '📊' },
+            { id: 'settings', label: 'Налаштування', icon: '⚙️' },
             { id: 'team', label: 'Команда', icon: '👥' },
             { id: 'messages', label: 'Чат', icon: '💬' },
         ];
@@ -43,6 +57,8 @@ const App = {
             case 'projects': ProjectsView.render(c); break;
             case 'files': FilesView.render(c, this.currentProject); break;
             case 'glossary': GlossaryView.render(c, this.currentProject); break;
+            case 'versions': GlossaryVersionsView.render(c, this.currentProject); break;
+            case 'settings': SettingsView.render(c, this.currentProject); break;
             case 'team': TeamView.render(c, this.currentProject); break;
             case 'pricing': PricingView.render(c, this.currentProject); break;
             case 'messages': MessagesView.render(c, this.currentProject); break;
@@ -60,12 +76,12 @@ const App = {
     },
 
     alert(msg) {
-        if (this.tg) this.tg.showAlert(msg);
+        if (this.tg && this.tg.showAlert) this.tg.showAlert(msg);
         else alert(msg);
     },
 
     confirm(msg, cb) {
-        if (this.tg) this.tg.showConfirm(msg, cb);
+        if (this.tg && this.tg.showConfirm) this.tg.showConfirm(msg, cb);
         else cb(confirm(msg));
     },
 

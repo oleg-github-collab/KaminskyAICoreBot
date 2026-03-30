@@ -4,6 +4,7 @@ const sqlite = @import("sqlite.zig");
 const migrations = [_]struct { version: i32, sql: []const u8 }{
     .{ .version = 1, .sql = @embedFile("../sql/001_initial.sql") },
     .{ .version = 2, .sql = @embedFile("../sql/002_indexes.sql") },
+    .{ .version = 3, .sql = @embedFile("../sql/003_workflow.sql") },
 };
 
 pub fn run(db: *sqlite.Db) !void {

@@ -8,6 +8,7 @@ const flow = @import("flow.zig");
 const msgs = @import("messages_ua.zig");
 const sqlite = @import("../db/sqlite.zig");
 const storage = @import("../storage/filesystem.zig");
+const workflow = @import("workflow.zig");
 
 /// Build the main menu keyboard JSON
 fn mainMenuKeyboard(allocator: std.mem.Allocator, mini_app_url: []const u8) ![]const u8 {
@@ -18,7 +19,7 @@ fn mainMenuKeyboard(allocator: std.mem.Allocator, mini_app_url: []const u8) ![]c
         },
         &.{
             .{ .text = "💬 Написати нам", .callback_data = "menu:chat" },
-            .{ .text = "📱 Панель", .web_app_url = mini_app_url },
+            .{ .text = "📱 Застосунок", .web_app_url = mini_app_url },
         },
         &.{
             .{ .text = "❓ Допомога", .callback_data = "menu:help" },
@@ -41,11 +42,17 @@ pub fn projectMenuKeyboard(allocator: std.mem.Allocator, project_id: i64) ![]con
             .{ .text = "📋 Файли", .callback_data = "proj:files" },
         },
         &.{
+            .{ .text = "📎 Інструкції", .callback_data = "proj:upload_instructions" },
             .{ .text = "💰 Вартість", .callback_data = "proj:pricing" },
-            .{ .text = "👥 Команда", .callback_data = "proj:team" },
         },
         &.{
-            .{ .text = "📱 Панель", .web_app_url = mini_app_url },
+            .{ .text = "👥 Команда", .callback_data = "proj:team" },
+            .{ .text = "📱 Застосунок", .web_app_url = mini_app_url },
+        },
+        &.{
+            .{ .text = "🗑 Видалити", .callback_data = "proj:delete" },
+        },
+        &.{
             .{ .text = "🔙 Назад", .callback_data = "menu:back" },
         },
     });
@@ -236,6 +243,27 @@ pub fn handleCallback(
         if (us.project_id) |pid| {
             try selectProject(allocator, db, tg, chat_id, user, pid);
         }
+    } else if (std.mem.eql(u8, data, "proj:delete")) {
+        try handleDeleteProject(allocator, db, tg, chat_id, user, mini_app_url);
+    } else if (std.mem.eql(u8, data, "proj:upload_instructions")) {
+        const us = try flow.getUserState(db, user.id);
+        if (us.project_id) |_| {
+            try flow.setUserState(db, user.id, .uploading_instructions, us.project_id);
+            const kb = try uploadKeyboard(allocator);
+            defer allocator.free(kb);
+            const resp = try tg.sendMessage(chat_id, "Надішліть файли з інструкціями, готовими глосаріями або стилістичними вказівками.\n\nЦі файли не тарифікуються.", kb);
+            allocator.free(resp);
+        }
+    } else if (std.mem.startsWith(u8, data, "wf:")) {
+        // Workflow callbacks: wf:approve:1:123, wf:reject:2:456
+        if (cbq.from.id == admin_chat_id) {
+            var parts = std.mem.splitScalar(u8, data, ':');
+            _ = parts.next(); // "wf"
+            const action = parts.next() orelse return;
+            const step_str = parts.next() orelse return;
+            const pid_str = parts.next() orelse return;
+            try workflow.handleAdminAction(allocator, db, tg, admin_chat_id, action, step_str, pid_str);
+        }
     }
 
     _ = data_dir;
@@ -350,7 +378,7 @@ fn handleUploadDone(
         \\
         \\Орієнтовна вартість: <b>€{s}</b>
         \\
-        \\Для зручного управління файлами використовуйте панель (кнопка «Панель» нижче).
+        \\Для зручного управління файлами використовуйте застосунок (кнопка «Застосунок» нижче).
     , .{ stats.count, info, price_str }) catch "Upload complete!";
 
     try flow.setUserState(db, user.id, .project_menu, pid);
@@ -540,7 +568,7 @@ fn handlePayment(
         pid,
         user.telegram_id,
     ) catch {
-        const resp = try tg.sendMessage(chat_id, "Помилка створення платежу. Спробуйте через панель.", null);
+        const resp = try tg.sendMessage(chat_id, "Помилка створення платежу. Спробуйте через застосунок.", null);
         allocator.free(resp);
         return;
     };
@@ -647,4 +675,43 @@ fn handleGlossaryRequest(
     defer allocator.free(kb);
     const resp = try tg.sendMessage(chat_id, text, kb);
     allocator.free(resp);
+}
+
+fn handleDeleteProject(
+    allocator: std.mem.Allocator,
+    db: *sqlite.Db,
+    tg: *tg_client.TelegramClient,
+    chat_id: i64,
+    user: *const db_users.UserRecord,
+    mini_app_url: []const u8,
+) !void {
+    const us = try flow.getUserState(db, user.id);
+    const pid = us.project_id orelse return;
+    const project = try db_projects.getById(allocator, db, pid) orelse return;
+
+    // Only owner can delete
+    if (project.owner_id != user.id) {
+        const del_resp = try tg.sendMessage(chat_id, "Тільки власник може видалити проєкт.", null);
+        allocator.free(del_resp);
+        return;
+    }
+
+    // Soft delete (is_active=0)
+    var stmt = try db.prepare(
+        "UPDATE projects SET is_active = 0, updated_at = ? WHERE id = ?",
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, std.time.timestamp());
+    try stmt.bindInt(2, pid);
+    try stmt.exec();
+
+    try flow.setUserState(db, user.id, .idle, null);
+
+    const del_kb = try mainMenuKeyboard(allocator, mini_app_url);
+    defer allocator.free(del_kb);
+
+    var buf: [256]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, "Проєкт <b>{s}</b> видалено.", .{project.name}) catch "Проєкт видалено.";
+    const del_resp = try tg.sendMessage(chat_id, text, del_kb);
+    allocator.free(del_resp);
 }

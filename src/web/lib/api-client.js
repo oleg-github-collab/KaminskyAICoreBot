@@ -1,12 +1,14 @@
 const API = {
     base: '/api',
     initData() {
-        return (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) || '';
+        if (typeof Auth !== 'undefined') return Auth.getAuthHeader();
+        return (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData)
+            ? 'tma ' + window.Telegram.WebApp.initData : '';
     },
     async req(method, path, body) {
         const opts = {
             method,
-            headers: { 'Authorization': 'tma ' + this.initData() }
+            headers: { 'Authorization': this.initData() }
         };
         if (body && !(body instanceof FormData)) {
             opts.headers['Content-Type'] = 'application/json';
@@ -16,14 +18,16 @@ const API = {
         }
         const r = await fetch(this.base + path, opts);
         if (!r.ok) {
-            const e = await r.json().catch(() => ({ error: 'Error ' + r.status }));
-            throw new Error(e.error || 'Error ' + r.status);
+            const e = await r.json().catch(() => ({ error: 'Помилка ' + r.status }));
+            throw new Error(e.error || 'Помилка ' + r.status);
         }
         return r.json();
     },
+
     getProjects() { return this.req('GET', '/projects'); },
     createProject(name, desc) { return this.req('POST', '/projects', { name, description: desc }); },
     getProject(id) { return this.req('GET', '/projects/' + id); },
+    deleteProject(id) { return this.req('DELETE', '/projects/' + id); },
 
     getFiles(pid, cat) {
         const q = cat ? '?category=' + cat : '';
@@ -46,7 +50,7 @@ const API = {
                 try {
                     const r = await fetch('/api/projects/' + pid + '/files', {
                         method: 'POST',
-                        headers: { 'Authorization': 'tma ' + API.initData() },
+                        headers: { 'Authorization': API.initData() },
                         body: fd
                     });
                     results.push(await r.json());
@@ -71,8 +75,21 @@ const API = {
     exportGlossary(pid, format) { return this.req('GET', '/projects/' + pid + '/glossary/export?format=' + (format || 'tsv')); },
     syncGlossary(pid) { return this.req('POST', '/projects/' + pid + '/glossary/sync'); },
 
+    getGlossaryVersions(pid) { return this.req('GET', '/projects/' + pid + '/glossary/versions'); },
+    getGlossaryVersion(pid, vid) { return this.req('GET', '/projects/' + pid + '/glossary/versions/' + vid); },
+    getGlossaryDiff(pid, a, b) { return this.req('GET', '/projects/' + pid + '/glossary/diff?a=' + a + '&b=' + b); },
+
     getMessages(pid) { return this.req('GET', '/projects/' + pid + '/messages'); },
+    sendMessage(pid, content) { return this.req('POST', '/projects/' + pid + '/messages', { content }); },
+
     getPricing(pid) { return this.req('GET', '/projects/' + pid + '/pricing'); },
     createInvoice(pid) { return this.req('POST', '/projects/' + pid + '/invoices'); },
     getInvoices(pid) { return this.req('GET', '/projects/' + pid + '/invoices'); },
+
+    getSettings(pid) { return this.req('GET', '/projects/' + pid + '/settings'); },
+    updateSettings(pid, settings) { return this.req('POST', '/projects/' + pid + '/settings', settings); },
+
+    getWorkflow(pid) { return this.req('GET', '/projects/' + pid + '/workflow'); },
+
+    createSession() { return this.req('POST', '/auth/session'); },
 };

@@ -7,7 +7,9 @@ const db_projects = @import("../db/projects_db.zig");
 const db_files = @import("../db/files_db.zig");
 const storage = @import("../storage/filesystem.zig");
 const pricing = @import("../processing/pricing.zig");
+const processor_client = @import("../processing/processor_client.zig");
 const deepl_client = @import("../deepl/client.zig");
+const glossary_versions_db = @import("../db/glossary_versions_db.zig");
 
 const MembershipRole = enum {
     owner,
@@ -93,6 +95,17 @@ fn authenticateImpl(req: *httpz.Request) !db_users.UserRecord {
     }
 
     const header_value = auth_header.?;
+
+    // Browser session token: "Bearer <hex_token>"
+    if (std.mem.startsWith(u8, header_value, "Bearer ")) {
+        const token = header_value[7..];
+        if (token.len > 0) {
+            return authenticateBearer(a, token) catch {
+                return AuthError.InvalidAuth;
+            };
+        }
+    }
+
     if (!std.mem.startsWith(u8, header_value, "tma ")) {
         if (!a.config.is_production) {
             return devUser();
@@ -139,6 +152,33 @@ fn authenticateImpl(req: *httpz.Request) !db_users.UserRecord {
     }
 
     return user;
+}
+
+fn authenticateBearer(a: *handler.App, token: []const u8) !db_users.UserRecord {
+    // Hash the token to compare with stored hash
+    var hash_out: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(token, &hash_out, .{});
+    var hash_hex_buf: [64]u8 = undefined;
+    const hash_hex = try std.fmt.bufPrint(&hash_hex_buf, "{}", .{std.fmt.fmtSliceHexLower(&hash_out)});
+
+    var stmt = try a.db.prepare(
+        "SELECT u.id, u.telegram_id, u.first_name, u.last_name, u.username, u.is_admin FROM web_sessions ws JOIN users u ON u.id = ws.user_id WHERE ws.token_hash = ? AND ws.expires_at > ?",
+    );
+    defer stmt.deinit();
+    try stmt.bindText(1, hash_hex);
+    try stmt.bindInt(2, std.time.timestamp());
+
+    if (try stmt.step()) {
+        return db_users.UserRecord{
+            .id = stmt.columnInt(0),
+            .telegram_id = stmt.columnInt(1),
+            .first_name = try a.allocator.dupe(u8, stmt.columnText(2) orelse ""),
+            .last_name = if (stmt.columnText(3)) |ln| try a.allocator.dupe(u8, ln) else null,
+            .username = if (stmt.columnText(4)) |un| try a.allocator.dupe(u8, un) else null,
+            .is_admin = stmt.columnInt(5) == 1,
+        };
+    }
+    return AuthError.InvalidAuth;
 }
 
 fn devUser() !db_users.UserRecord {
@@ -348,7 +388,8 @@ fn normalizeCategory(raw: ?[]const u8, file_name: []const u8) []const u8 {
             std.mem.eql(u8, category, "glossary") or
             std.mem.eql(u8, category, "translated") or
             std.mem.eql(u8, category, "document") or
-            std.mem.eql(u8, category, "media"))
+            std.mem.eql(u8, category, "media") or
+            std.mem.eql(u8, category, "instructions"))
         {
             return category;
         }
@@ -763,18 +804,27 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
     var page_count: i64 = 0;
     var price_cents: i64 = 0;
 
-    const is_pdf = isPdf(original_name) or pricing.isPdfContent(file_field.value);
-    if (is_pdf) {
-        page_count = @intCast(pricing.countPdfPages(file_field.value));
-        price_cents = pricing.priceForPages(@intCast(page_count));
-    } else if (pricing.isTextContent(file_field.value)) {
-        // Actual text content → accurate character counting
-        char_count = @intCast(pricing.countChars(file_field.value));
-        price_cents = pricing.priceForChars(@intCast(char_count));
-    } else {
-        // Binary document (.docx, .doc, etc.) → estimate pages
-        page_count = @intCast(pricing.estimateDocPages(file_field.value.len));
-        price_cents = pricing.priceForPages(@intCast(page_count));
+    // Instructions are never billed
+    if (!std.mem.eql(u8, category, "instructions")) {
+        // Try Python processor first (accurate counting with proper libraries)
+        if (processor_client.countDocument(res.arena, &a.config, store_path, original_name)) |result| {
+            char_count = result.chars;
+            page_count = result.pages;
+            price_cents = result.pricing_cents;
+        } else |_| {
+            // Fallback to local pricing
+            const is_pdf = isPdf(original_name) or pricing.isPdfContent(file_field.value);
+            if (is_pdf) {
+                page_count = @intCast(pricing.countPdfPages(file_field.value));
+                price_cents = pricing.priceForPages(@intCast(page_count));
+            } else if (pricing.isTextContent(file_field.value)) {
+                char_count = @intCast(pricing.countChars(file_field.value));
+                price_cents = pricing.priceForChars(@intCast(char_count));
+            } else {
+                page_count = @intCast(pricing.estimateDocPages(file_field.value.len));
+                price_cents = pricing.priceForPages(@intCast(page_count));
+            }
+        }
     }
 
     const file_id = try db_files.store(
@@ -1385,4 +1435,486 @@ pub fn handleListInvoices(req: *httpz.Request, res: *httpz.Response) !void {
     }
 
     try res.json(.{ .invoices = try items.toOwnedSlice() }, .{});
+}
+
+// ─── Delete Project ─────────────────────────────────────────────────────────
+
+pub fn handleDeleteProject(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    // Only owner can delete
+    if (access.role != .owner) {
+        jsonError(res, 403, "Тільки власник може видалити проєкт.");
+        return;
+    }
+
+    var stmt = try a.db.prepare(
+        "UPDATE projects SET is_active = 0, updated_at = ? WHERE id = ?",
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, std.time.timestamp());
+    try stmt.bindInt(2, access.project_id);
+    try stmt.exec();
+
+    try res.json(.{ .deleted = true }, .{});
+}
+
+// ─── Glossary Versions ──────────────────────────────────────────────────────
+
+pub fn handleListGlossaryVersions(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    const versions = try glossary_versions_db.getVersions(res.arena, &a.db, access.project_id);
+
+    const VersionItem = struct {
+        id: i64,
+        version_number: i64,
+        change_summary: []const u8,
+        terms_added: i64,
+        terms_removed: i64,
+        terms_modified: i64,
+        created_at: i64,
+    };
+
+    var items = try std.ArrayList(VersionItem).initCapacity(res.arena, versions.len);
+    for (versions) |v| {
+        try items.append(.{
+            .id = v.id,
+            .version_number = v.version_number,
+            .change_summary = v.change_summary,
+            .terms_added = v.terms_added,
+            .terms_removed = v.terms_removed,
+            .terms_modified = v.terms_modified,
+            .created_at = v.created_at,
+        });
+    }
+
+    try res.json(.{ .versions = try items.toOwnedSlice() }, .{});
+}
+
+pub fn handleGetGlossaryVersion(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    _ = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    const vid = parseIntParam(req, "version_id") catch {
+        jsonError(res, 400, "Некоректний ідентифікатор версії.");
+        return;
+    };
+
+    const version = try glossary_versions_db.getVersion(res.arena, &a.db, vid) orelse {
+        jsonError(res, 404, "Версію не знайдено.");
+        return;
+    };
+
+    try res.json(.{
+        .id = version.id,
+        .version_number = version.version_number,
+        .snapshot_tsv = version.snapshot_tsv,
+        .change_summary = version.change_summary,
+        .terms_added = version.terms_added,
+        .terms_removed = version.terms_removed,
+        .terms_modified = version.terms_modified,
+        .created_at = version.created_at,
+    }, .{});
+}
+
+pub fn handleGlossaryDiff(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    _ = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    const query = req.query() orelse {
+        jsonError(res, 400, "Параметри a та b обов'язкові.");
+        return;
+    };
+
+    const a_str = query.get("a") orelse {
+        jsonError(res, 400, "Параметр a обов'язковий.");
+        return;
+    };
+    const b_str = query.get("b") orelse {
+        jsonError(res, 400, "Параметр b обов'язковий.");
+        return;
+    };
+
+    const vid_a = std.fmt.parseInt(i64, a_str, 10) catch {
+        jsonError(res, 400, "Некоректний параметр a.");
+        return;
+    };
+    const vid_b = std.fmt.parseInt(i64, b_str, 10) catch {
+        jsonError(res, 400, "Некоректний параметр b.");
+        return;
+    };
+
+    const ver_a = try glossary_versions_db.getVersion(res.arena, &a.db, vid_a) orelse {
+        jsonError(res, 404, "Версію A не знайдено.");
+        return;
+    };
+    const ver_b = try glossary_versions_db.getVersion(res.arena, &a.db, vid_b) orelse {
+        jsonError(res, 404, "Версію B не знайдено.");
+        return;
+    };
+
+    // Compute diff: parse TSV into hashmaps, compare
+    var map_a = std.StringHashMap([]const u8).init(res.arena);
+    var map_b = std.StringHashMap([]const u8).init(res.arena);
+
+    parseTsvIntoMap(ver_a.snapshot_tsv, &map_a, res.arena) catch {};
+    parseTsvIntoMap(ver_b.snapshot_tsv, &map_b, res.arena) catch {};
+
+    // Build diff JSON manually
+    var json_buf = std.ArrayList(u8).init(res.arena);
+    var writer = json_buf.writer();
+    try writer.writeAll("{\"changes\":[");
+
+    var first = true;
+
+    // Added: in B but not in A
+    var it_b = map_b.iterator();
+    while (it_b.next()) |entry| {
+        if (!map_a.contains(entry.key_ptr.*)) {
+            if (!first) try writer.writeAll(",");
+            first = false;
+            try writer.writeAll("{\"type\":\"added\",\"source\":");
+            try std.json.stringify(entry.key_ptr.*, .{}, writer);
+            try writer.writeAll(",\"target\":");
+            try std.json.stringify(entry.value_ptr.*, .{}, writer);
+            try writer.writeAll("}");
+        }
+    }
+
+    // Removed: in A but not in B
+    var it_a = map_a.iterator();
+    while (it_a.next()) |entry| {
+        if (!map_b.contains(entry.key_ptr.*)) {
+            if (!first) try writer.writeAll(",");
+            first = false;
+            try writer.writeAll("{\"type\":\"removed\",\"source\":");
+            try std.json.stringify(entry.key_ptr.*, .{}, writer);
+            try writer.writeAll(",\"target\":");
+            try std.json.stringify(entry.value_ptr.*, .{}, writer);
+            try writer.writeAll("}");
+        }
+    }
+
+    // Modified: in both, different target
+    var it_mod = map_a.iterator();
+    while (it_mod.next()) |entry| {
+        if (map_b.get(entry.key_ptr.*)) |new_target| {
+            if (!std.mem.eql(u8, entry.value_ptr.*, new_target)) {
+                if (!first) try writer.writeAll(",");
+                first = false;
+                try writer.writeAll("{\"type\":\"modified\",\"source\":");
+                try std.json.stringify(entry.key_ptr.*, .{}, writer);
+                try writer.writeAll(",\"old_target\":");
+                try std.json.stringify(entry.value_ptr.*, .{}, writer);
+                try writer.writeAll(",\"new_target\":");
+                try std.json.stringify(new_target, .{}, writer);
+                try writer.writeAll("}");
+            }
+        }
+    }
+
+    try writer.writeAll("]}");
+
+    res.status = 200;
+    res.header("Content-Type", "application/json");
+    res.body = json_buf.items;
+}
+
+fn parseTsvIntoMap(tsv: []const u8, map: *std.StringHashMap([]const u8), arena: std.mem.Allocator) !void {
+    var lines = std.mem.splitScalar(u8, tsv, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
+        if (trimmed.len == 0) continue;
+        if (std.mem.indexOfScalar(u8, trimmed, '\t')) |tab_idx| {
+            const source = try arena.dupe(u8, std.mem.trim(u8, trimmed[0..tab_idx], &std.ascii.whitespace));
+            const target = try arena.dupe(u8, std.mem.trim(u8, trimmed[tab_idx + 1 ..], &std.ascii.whitespace));
+            if (source.len > 0 and target.len > 0) {
+                try map.put(source, target);
+            }
+        }
+    }
+}
+
+// ─── Translation Settings ───────────────────────────────────────────────────
+
+pub fn handleGetSettings(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    var stmt = try a.db.prepare(
+        "SELECT formality, split_sentences, preserve_formatting, context, tag_handling FROM translation_settings WHERE project_id = ?",
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, access.project_id);
+
+    if (try stmt.step()) {
+        try res.json(.{
+            .formality = try dupOrEmpty(res.arena, stmt.columnText(0)),
+            .split_sentences = try dupOrEmpty(res.arena, stmt.columnText(1)),
+            .preserve_formatting = stmt.columnInt(2) == 1,
+            .context = try dupOrEmpty(res.arena, stmt.columnText(3)),
+            .tag_handling = try dupOrEmpty(res.arena, stmt.columnText(4)),
+        }, .{});
+    } else {
+        try res.json(.{
+            .formality = "default",
+            .split_sentences = "1",
+            .preserve_formatting = true,
+            .context = "",
+            .tag_handling = "",
+        }, .{});
+    }
+}
+
+pub fn handleUpdateSettings(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    const body = req.body() orelse {
+        jsonError(res, 400, "Пустий запит.");
+        return;
+    };
+
+    const parsed = std.json.parseFromSlice(struct {
+        formality: ?[]const u8 = null,
+        split_sentences: ?[]const u8 = null,
+        preserve_formatting: ?bool = null,
+        context: ?[]const u8 = null,
+        tag_handling: ?[]const u8 = null,
+    }, res.arena, body, .{ .ignore_unknown_fields = true }) catch {
+        jsonError(res, 400, "Невірний формат JSON.");
+        return;
+    };
+    defer parsed.deinit();
+
+    const now = std.time.timestamp();
+    var stmt = try a.db.prepare(
+        "INSERT INTO translation_settings (project_id, formality, split_sentences, preserve_formatting, context, tag_handling, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET formality=excluded.formality, split_sentences=excluded.split_sentences, preserve_formatting=excluded.preserve_formatting, context=excluded.context, tag_handling=excluded.tag_handling, updated_at=excluded.updated_at",
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, access.project_id);
+    try stmt.bindText(2, parsed.value.formality orelse "default");
+    try stmt.bindText(3, parsed.value.split_sentences orelse "1");
+    try stmt.bindInt(4, if (parsed.value.preserve_formatting orelse true) 1 else 0);
+    try stmt.bindText(5, parsed.value.context orelse "");
+    try stmt.bindText(6, parsed.value.tag_handling orelse "");
+    try stmt.bindInt(7, now);
+    try stmt.exec();
+
+    try res.json(.{ .ok = true }, .{});
+}
+
+// ─── Send Message (Web App → Telegram) ──────────────────────────────────────
+
+pub fn handleSendMessage(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    const body = req.body() orelse {
+        jsonError(res, 400, "Пустий запит.");
+        return;
+    };
+
+    const parsed = std.json.parseFromSlice(struct {
+        content: ?[]const u8 = null,
+    }, res.arena, body, .{ .ignore_unknown_fields = true }) catch {
+        jsonError(res, 400, "Невірний формат JSON.");
+        return;
+    };
+    defer parsed.deinit();
+
+    const content = parsed.value.content orelse {
+        jsonError(res, 400, "Поле content обов'язкове.");
+        return;
+    };
+
+    if (content.len == 0 or content.len > 4096) {
+        jsonError(res, 400, "Повідомлення має бути від 1 до 4096 символів.");
+        return;
+    }
+
+    const now = std.time.timestamp();
+
+    // Generate UUID for dedup
+    var uuid_bytes: [16]u8 = undefined;
+    std.crypto.random.bytes(&uuid_bytes);
+    var uuid_buf: [36]u8 = undefined;
+    const uuid = std.fmt.bufPrint(&uuid_buf, "{x:0>2}{x:0>2}{x:0>2}{x:0>2}-{x:0>2}{x:0>2}-{x:0>2}{x:0>2}-{x:0>2}{x:0>2}-{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}", .{
+        uuid_bytes[0],  uuid_bytes[1],  uuid_bytes[2],  uuid_bytes[3],
+        uuid_bytes[4],  uuid_bytes[5],  uuid_bytes[6],  uuid_bytes[7],
+        uuid_bytes[8],  uuid_bytes[9],  uuid_bytes[10], uuid_bytes[11],
+        uuid_bytes[12], uuid_bytes[13], uuid_bytes[14], uuid_bytes[15],
+    }) catch "no-uuid";
+
+    // Store message
+    var msg_stmt = try a.db.prepare(
+        "INSERT INTO messages (project_id, sender_id, direction, message_type, content, target_chat_id, sender_name, message_uuid, created_at) VALUES (?, ?, 'to_admin', 'text', ?, ?, ?, ?, ?)",
+    );
+    defer msg_stmt.deinit();
+    try msg_stmt.bindInt(1, access.project_id);
+    try msg_stmt.bindInt(2, user.id);
+    try msg_stmt.bindText(3, content);
+    try msg_stmt.bindInt(4, a.config.admin_chat_id);
+    try msg_stmt.bindText(5, user.first_name);
+    try msg_stmt.bindText(6, uuid);
+    try msg_stmt.bindInt(7, now);
+    try msg_stmt.exec();
+
+    // Insert SSE event
+    var sse_stmt = try a.db.prepare(
+        "INSERT INTO sse_events (project_id, event_type, payload, created_at) VALUES (?, 'message', ?, ?)",
+    );
+    defer sse_stmt.deinit();
+    try sse_stmt.bindInt(1, access.project_id);
+
+    const payload = try std.json.stringifyAlloc(res.arena, .{
+        .content = content,
+        .sender_name = user.first_name,
+        .direction = "to_admin",
+        .uuid = uuid,
+        .created_at = now,
+    }, .{});
+    try sse_stmt.bindText(2, payload);
+    try sse_stmt.bindInt(3, now);
+    try sse_stmt.exec();
+
+    // Forward to admin via Telegram
+    var fwd_buf: [4200]u8 = undefined;
+    const fwd_text = std.fmt.bufPrint(&fwd_buf, "💬 <b>{s}</b> (проєкт #{d}):\n\n{s}", .{
+        user.first_name, access.project_id, content,
+    }) catch content;
+    const fwd_resp = a.tg.sendMessage(a.config.admin_chat_id, fwd_text, null) catch |err| {
+        std.log.err("Failed to forward message to admin: {}", .{err});
+        try res.json(.{ .sent = true, .uuid = uuid }, .{});
+        return;
+    };
+    a.allocator.free(fwd_resp);
+
+    try res.json(.{ .sent = true, .uuid = uuid }, .{});
+}
+
+// ─── SSE Message Stream ─────────────────────────────────────────────────────
+
+pub fn handleMessageStream(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    res.status = 200;
+    res.header("Content-Type", "text/event-stream");
+    res.header("Cache-Control", "no-cache");
+    res.header("Connection", "keep-alive");
+    res.header("X-Accel-Buffering", "no");
+
+    // Get last known event ID from client
+    const last_id_str = req.header("last-event-id") orelse "0";
+    var last_id = std.fmt.parseInt(i64, last_id_str, 10) catch 0;
+
+    // Build response body with recent events
+    var body_buf = std.ArrayList(u8).init(res.arena);
+    var writer = body_buf.writer();
+
+    // Send any queued events since last_id
+    var stmt = try a.db.prepare(
+        "SELECT id, event_type, payload FROM sse_events WHERE project_id = ? AND id > ? ORDER BY id ASC LIMIT 50",
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, access.project_id);
+    try stmt.bindInt(2, last_id);
+
+    while (try stmt.step()) {
+        const eid = stmt.columnInt(0);
+        const payload = stmt.columnText(2) orelse "{}";
+        try std.fmt.format(writer, "id: {d}\ndata: {s}\n\n", .{ eid, payload });
+        last_id = eid;
+    }
+
+    // Send heartbeat if no events
+    if (body_buf.items.len == 0) {
+        try writer.writeAll(": heartbeat\n\n");
+    }
+
+    res.body = body_buf.items;
+}
+
+// ─── Workflow Status ────────────────────────────────────────────────────────
+
+pub fn handleWorkflowStatus(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    var stmt = try a.db.prepare(
+        "SELECT step_number, step_type, status, created_at, completed_at FROM workflow_steps WHERE project_id = ? ORDER BY step_number ASC",
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, access.project_id);
+
+    const Step = struct {
+        step_number: i64,
+        step_type: []const u8,
+        status: []const u8,
+        created_at: i64,
+        completed_at: i64,
+    };
+
+    var steps = std.ArrayList(Step).init(res.arena);
+    while (try stmt.step()) {
+        try steps.append(.{
+            .step_number = stmt.columnInt(0),
+            .step_type = try dupOrEmpty(res.arena, stmt.columnText(1)),
+            .status = try dupOrEmpty(res.arena, stmt.columnText(2)),
+            .created_at = stmt.columnInt(3),
+            .completed_at = stmt.columnInt(4),
+        });
+    }
+
+    try res.json(.{ .steps = try steps.toOwnedSlice() }, .{});
+}
+
+// ─── Auth Session (for desktop browser) ─────────────────────────────────────
+
+pub fn handleCreateSession(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const a = app();
+
+    // Generate random token
+    var token_bytes: [32]u8 = undefined;
+    std.crypto.random.bytes(&token_bytes);
+    var token_buf: [64]u8 = undefined;
+    const token = try std.fmt.bufPrint(&token_buf, "{}", .{std.fmt.fmtSliceHexLower(&token_bytes)});
+
+    // Hash token for storage
+    var hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(token, &hash, .{});
+    var hash_hex_buf: [64]u8 = undefined;
+    const hash_hex = try std.fmt.bufPrint(&hash_hex_buf, "{}", .{std.fmt.fmtSliceHexLower(&hash)});
+
+    const now = std.time.timestamp();
+    const expires = now + 30 * 24 * 60 * 60; // 30 days
+
+    var stmt = try a.db.prepare(
+        "INSERT INTO web_sessions (user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)",
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, user.id);
+    try stmt.bindText(2, hash_hex);
+    try stmt.bindInt(3, expires);
+    try stmt.bindInt(4, now);
+    try stmt.exec();
+
+    try res.json(.{
+        .token = token,
+        .expires_at = expires,
+    }, .{});
 }

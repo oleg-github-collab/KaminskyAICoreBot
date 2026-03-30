@@ -48,7 +48,7 @@ pub const OpenAIClient = struct {
         defer body.deinit();
         var w = body.writer();
 
-        try w.writeAll("{\"model\":\"gpt-4.1-nano\",\"temperature\":0.3,\"max_tokens\":500,\"messages\":[");
+        try w.writeAll("{\"model\":\"gpt-5.4-nano\",\"temperature\":0.3,\"max_tokens\":500,\"messages\":[");
         try w.writeAll("{\"role\":\"system\",\"content\":");
         try std.json.stringify(system_prompt, .{}, w);
         try w.writeAll("},{\"role\":\"user\",\"content\":");

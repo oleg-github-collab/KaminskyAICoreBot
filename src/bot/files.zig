@@ -5,6 +5,8 @@ const db_users = @import("../db/users.zig");
 const db_files = @import("../db/files_db.zig");
 const sqlite = @import("../db/sqlite.zig");
 const pricing = @import("../processing/pricing.zig");
+const processor_client = @import("../processing/processor_client.zig");
+const config_mod = @import("../config.zig");
 const storage = @import("../storage/filesystem.zig");
 const msgs = @import("messages_ua.zig");
 
@@ -29,7 +31,7 @@ pub fn handleFileMessage(
     if (fsize > 20 * 1024 * 1024) {
         const resp = try tg.sendMessage(
             msg.chat.id,
-            "Файл завеликий (понад 20 МБ). Telegram обмежує розмір файлів для ботів.\n\nБудь ласка, завантажте файл через панель управління (кнопка «Панель»).",
+            "Файл завеликий (понад 20 МБ). Telegram обмежує розмір файлів для ботів.\n\nБудь ласка, завантажте файл через застосунок (кнопка «Застосунок»).",
             null,
         );
         allocator.free(resp);
@@ -57,7 +59,7 @@ pub fn handleFileMessage(
     if (tg_file_path.len == 0) {
         const resp = try tg.sendMessage(
             msg.chat.id,
-            "Не вдалося отримати файл. Можливо, він перевищує ліміт Telegram (20 МБ).\n\nСпробуйте завантажити через панель управління.",
+            "Не вдалося отримати файл. Можливо, він перевищує ліміт Telegram (20 МБ).\n\nСпробуйте завантажити через застосунок.",
             null,
         );
         allocator.free(resp);
@@ -85,33 +87,44 @@ pub fn handleFileMessage(
         return;
     };
 
-    // 5. Calculate pricing — read file content to determine type and count
+    // 5. Calculate pricing via Python processor (accurate) with local fallback
     var char_count: i64 = 0;
     var page_count: i64 = 0;
     var price_cents: i64 = 0;
 
-    const file = std.fs.openFileAbsolute(store_path, .{}) catch null;
-    if (file) |f| {
-        defer f.close();
-        const data = f.readToEndAlloc(allocator, 50 * 1024 * 1024) catch null;
-        if (data) |d| {
-            defer allocator.free(d);
-
-            const is_pdf = (mime != null and std.mem.eql(u8, mime.?, "application/pdf")) or
-                pricing.isPdfContent(d);
-
-            if (is_pdf) {
-                // PDF → count pages
-                page_count = @intCast(pricing.countPdfPages(d));
-                price_cents = pricing.priceForPages(@intCast(page_count));
-            } else if (pricing.isTextContent(d)) {
-                // Actual text file → accurate character counting
-                char_count = @intCast(pricing.countChars(d));
-                price_cents = pricing.priceForChars(@intCast(char_count));
-            } else {
-                // Binary document (.docx, .doc, etc.) → estimate pages
-                page_count = @intCast(pricing.estimateDocPages(d.len));
-                price_cents = pricing.priceForPages(@intCast(page_count));
+    // Instructions are never billed
+    if (!std.mem.eql(u8, category, "instructions")) {
+        // Try Python processor first (accurate counting with proper libraries)
+        const config = &@import("../webhook/handler.zig").app_global.config;
+        if (processor_client.countDocument(allocator, config, store_path, original_name)) |result| {
+            char_count = result.chars;
+            page_count = result.pages;
+            price_cents = result.pricing_cents;
+            std.log.info("Processor count: pages={d}, chars={d}, price={d}, method={s}", .{
+                page_count, char_count, price_cents, result.method,
+            });
+        } else |err| {
+            // Fallback to local pricing (less accurate for .docx but works offline)
+            std.log.warn("Processor unavailable ({s}), falling back to local pricing", .{@errorName(err)});
+            const file = std.fs.openFileAbsolute(store_path, .{}) catch null;
+            if (file) |f| {
+                defer f.close();
+                const data = f.readToEndAlloc(allocator, 50 * 1024 * 1024) catch null;
+                if (data) |d| {
+                    defer allocator.free(d);
+                    const is_pdf = (mime != null and std.mem.eql(u8, mime.?, "application/pdf")) or
+                        pricing.isPdfContent(d);
+                    if (is_pdf) {
+                        page_count = @intCast(pricing.countPdfPages(d));
+                        price_cents = pricing.priceForPages(@intCast(page_count));
+                    } else if (pricing.isTextContent(d)) {
+                        char_count = @intCast(pricing.countChars(d));
+                        price_cents = pricing.priceForChars(@intCast(char_count));
+                    } else {
+                        page_count = @intCast(pricing.estimateDocPages(d.len));
+                        price_cents = pricing.priceForPages(@intCast(page_count));
+                    }
+                }
             }
         }
     }

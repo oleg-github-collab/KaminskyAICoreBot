@@ -91,7 +91,7 @@ pub fn buildBatchJsonl(
         try std.fmt.formatInt(project_id, 10, .lower, .{}, w);
         try w.writeAll("_chunk_");
         try std.fmt.formatInt(@as(i64, @intCast(i)), 10, .lower, .{}, w);
-        try w.writeAll("\",\"method\":\"POST\",\"url\":\"/v1/chat/completions\",\"body\":{\"model\":\"gpt-4.1-nano\",\"temperature\":0.1,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":");
+        try w.writeAll("\",\"method\":\"POST\",\"url\":\"/v1/chat/completions\",\"body\":{\"model\":\"gpt-5.4-nano\",\"temperature\":0.1,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":");
         try std.json.stringify(system_prompt, .{}, w);
         try w.writeAll("},{\"role\":\"user\",\"content\":");
 
