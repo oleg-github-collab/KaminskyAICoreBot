@@ -126,6 +126,35 @@ fn handleMessage(a: *App, msg: *const tg_types.Message) !void {
                 a.config.admin_chat_id, msg, &user, user_state.project_id,
             );
         },
+        .project_menu => {
+            if (tg_types.fileId(msg) != null) {
+                if (user_state.project_id) |pid| {
+                    // Auto-start source file upload
+                    try flow.setUserState(&a.db, user.id, .uploading_source, pid);
+                    try files_mod.handleFileMessage(
+                        a.allocator, &a.db, &a.tg, msg, &user,
+                        pid, "source", a.config.data_dir, a.config.admin_chat_id,
+                    );
+                    // Show upload keyboard for continuing
+                    const kb = try commands.uploadKeyboard(a.allocator);
+                    defer a.allocator.free(kb);
+                    const info_resp = try a.tg.sendMessage(
+                        msg.chat.id,
+                        "Файл додано як <b>вихідний</b>.\nНадсилайте ще файли або натисніть кнопку нижче.",
+                        kb,
+                    );
+                    a.allocator.free(info_resp);
+                } else {
+                    const resp = try a.tg.sendMessage(msg.chat.id, msgs.error_no_project, null);
+                    a.allocator.free(resp);
+                }
+            } else if (msg.text != null) {
+                try relay.handleClientMessage(
+                    a.allocator, &a.db, &a.tg,
+                    a.config.admin_chat_id, msg, &user, user_state.project_id,
+                );
+            }
+        },
         else => {
             if (tg_types.fileId(msg) != null) {
                 const resp = try a.tg.sendMessage(msg.chat.id, msgs.error_no_project, null);
@@ -153,9 +182,17 @@ fn handleCreateProject(a: *App, msg: *const tg_types.Message, user: *const db_us
 
     try flow.setUserState(&a.db, user.id, .project_menu, project.id);
 
-    var buf: [256]u8 = undefined;
-    const text = std.fmt.bufPrint(&buf, "Проєкт <b>{s}</b> створено!\n\nТепер завантажте файли.", .{trimmed}) catch "OK";
-    const resp = try a.tg.sendMessage(msg.chat.id, text, null);
+    var buf: [512]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf,
+        \\Проєкт <b>{s}</b> створено!
+        \\
+        \\Наступний крок — завантажте вихідні файли для обробки.
+        \\Натисніть «Вихідні файли» нижче.
+    , .{trimmed}) catch "OK";
+
+    const kb = try commands.projectMenuKeyboard(a.allocator, project.id);
+    defer a.allocator.free(kb);
+    const resp = try a.tg.sendMessage(msg.chat.id, text, kb);
     a.allocator.free(resp);
 }
 

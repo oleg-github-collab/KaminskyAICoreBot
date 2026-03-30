@@ -437,16 +437,23 @@ fn createStripeCheckoutSession(
     user_telegram_id: i64,
 ) !StripeSession {
     var body = std.ArrayList(u8).init(allocator);
+    defer body.deinit();
 
-    const success_url = try std.fmt.allocPrint(allocator, "{s}?payment=success", .{mini_app_url});
-    const cancel_url = try std.fmt.allocPrint(allocator, "{s}?payment=cancel", .{mini_app_url});
-    const project_id_str = try std.fmt.allocPrint(allocator, "{d}", .{project_id});
-    const user_id_str = try std.fmt.allocPrint(allocator, "{d}", .{user_telegram_id});
-    const amount_str = try std.fmt.allocPrint(allocator, "{d}", .{amount_cents});
-    const item_name = try std.fmt.allocPrint(allocator, "Translation project: {s}", .{project_name});
+    // Use stack buffers to avoid allocation leaks
+    var success_buf: [512]u8 = undefined;
+    const success_url = std.fmt.bufPrint(&success_buf, "{s}?payment=success", .{mini_app_url}) catch "https://example.com/success";
+    var cancel_buf: [512]u8 = undefined;
+    const cancel_url = std.fmt.bufPrint(&cancel_buf, "{s}?payment=cancel", .{mini_app_url}) catch "https://example.com/cancel";
+    var pid_buf: [20]u8 = undefined;
+    const project_id_str = std.fmt.bufPrint(&pid_buf, "{d}", .{project_id}) catch "0";
+    var uid_buf: [20]u8 = undefined;
+    const user_id_str = std.fmt.bufPrint(&uid_buf, "{d}", .{user_telegram_id}) catch "0";
+    var amt_buf: [20]u8 = undefined;
+    const amount_str = std.fmt.bufPrint(&amt_buf, "{d}", .{amount_cents}) catch "0";
+    var name_buf: [256]u8 = undefined;
+    const item_name = std.fmt.bufPrint(&name_buf, "KI Beratung — {s}", .{project_name}) catch "KI Beratung";
 
     try appendFormField(&body, "mode", "payment");
-    try appendFormField(&body, "payment_method_types[0]", "card");
     try appendFormField(&body, "line_items[0][price_data][currency]", "eur");
     try appendFormField(&body, "line_items[0][price_data][unit_amount]", amount_str);
     try appendFormField(&body, "line_items[0][price_data][product_data][name]", item_name);
@@ -457,6 +464,8 @@ fn createStripeCheckoutSession(
     try appendFormField(&body, "metadata[user_telegram_id]", user_id_str);
     try appendFormField(&body, "client_reference_id", project_id_str);
 
+    std.log.info("Stripe: creating checkout session, amount={d} cents, project={s}", .{ amount_cents, project_name });
+
     const uri = try std.Uri.parse("https://api.stripe.com/v1/checkout/sessions");
 
     var auth_buf: [256]u8 = undefined;
@@ -465,7 +474,7 @@ fn createStripeCheckoutSession(
     var client = std.http.Client{ .allocator = allocator };
     defer client.deinit();
 
-    var header_buf: [4096]u8 = undefined;
+    var header_buf: [8192]u8 = undefined;
     var req = try client.open(.POST, uri, .{
         .server_header_buffer = &header_buf,
         .extra_headers = &.{
@@ -481,19 +490,30 @@ fn createStripeCheckoutSession(
     try req.finish();
     try req.wait();
 
+    // Response body is NOT freed because parsed data points into it
     const response_body = try req.reader().readAllAlloc(allocator, 1024 * 1024);
-    const parsed = try std.json.parseFromSliceLeaky(struct {
+
+    std.log.info("Stripe response: {s}", .{response_body[0..@min(response_body.len, 300)]});
+
+    const parsed = std.json.parseFromSliceLeaky(struct {
         id: ?[]const u8 = null,
         url: ?[]const u8 = null,
         @"error": ?struct {
             message: ?[]const u8 = null,
+            type: ?[]const u8 = null,
         } = null,
     }, allocator, response_body, .{
         .ignore_unknown_fields = true,
-    });
+    }) catch |err| {
+        std.log.err("Stripe JSON parse error: {}", .{err});
+        return error.StripeSessionFailed;
+    };
 
     if (parsed.@"error") |stripe_error| {
-        std.log.err("Stripe session error: {s}", .{stripe_error.message orelse "unknown"});
+        std.log.err("Stripe session error: {s} (type: {s})", .{
+            stripe_error.message orelse "unknown",
+            stripe_error.type orelse "unknown",
+        });
         return error.StripeSessionFailed;
     }
 
@@ -1230,7 +1250,7 @@ pub fn handleCreateInvoice(req: *httpz.Request, res: *httpz.Response) !void {
         return;
     }
 
-    const description = try std.fmt.allocPrint(res.arena, "Project {s}", .{access.project.name});
+    const description = try std.fmt.allocPrint(res.arena, "KI Beratung — {s}", .{access.project.name});
     var stripe_session_id: ?[]const u8 = null;
     var payment_url: ?[]const u8 = null;
 
@@ -1302,4 +1322,47 @@ pub fn handleCreateInvoice(req: *httpz.Request, res: *httpz.Response) !void {
         .currency = "EUR",
         .payment_url = payment_url,
     }, .{});
+}
+
+pub fn handleListInvoices(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    var stmt = try a.db.prepare(
+        \\SELECT id, amount_cents, currency, description, status, stripe_payment_url, created_at, paid_at
+        \\FROM invoices
+        \\WHERE project_id = ?
+        \\ORDER BY created_at DESC
+        \\LIMIT 50
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, access.project_id);
+
+    const Item = struct {
+        id: i64,
+        amount_cents: i64,
+        currency: []const u8,
+        description: []const u8,
+        status: []const u8,
+        payment_url: []const u8,
+        created_at: i64,
+        paid_at: i64,
+    };
+
+    var items = std.ArrayList(Item).init(res.arena);
+    while (try stmt.step()) {
+        try items.append(.{
+            .id = stmt.columnInt(0),
+            .amount_cents = stmt.columnInt(1),
+            .currency = try dupOrEmpty(res.arena, stmt.columnText(2)),
+            .description = try dupOrEmpty(res.arena, stmt.columnText(3)),
+            .status = try dupOrEmpty(res.arena, stmt.columnText(4)),
+            .payment_url = try dupOrEmpty(res.arena, stmt.columnText(5)),
+            .created_at = stmt.columnInt(6),
+            .paid_at = stmt.columnInt(7),
+        });
+    }
+
+    try res.json(.{ .invoices = try items.toOwnedSlice() }, .{});
 }

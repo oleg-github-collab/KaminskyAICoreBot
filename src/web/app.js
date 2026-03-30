@@ -19,15 +19,15 @@ const App = {
     buildNav() {
         const nav = document.getElementById('nav');
         const views = [
-            { id: 'projects', label: 'Projects' },
-            { id: 'files', label: 'Files' },
-            { id: 'glossary', label: 'Glossary' },
-            { id: 'team', label: 'Team' },
-            { id: 'pricing', label: 'Pricing' },
-            { id: 'messages', label: 'Messages' },
+            { id: 'projects', label: 'Проєкти', icon: '📁' },
+            { id: 'files', label: 'Файли', icon: '📄' },
+            { id: 'pricing', label: 'Вартість', icon: '💰' },
+            { id: 'glossary', label: 'Глосарій', icon: '📋' },
+            { id: 'team', label: 'Команда', icon: '👥' },
+            { id: 'messages', label: 'Чат', icon: '💬' },
         ];
         nav.innerHTML = views.map(v =>
-            `<button class="nav-btn${v.id === this.currentView ? ' active' : ''}" data-view="${v.id}">${v.label}</button>`
+            `<button class="nav-btn${v.id === this.currentView ? ' active' : ''}" data-view="${v.id}">${v.icon} ${v.label}</button>`
         ).join('');
         nav.querySelectorAll('.nav-btn').forEach(btn => {
             btn.addEventListener('click', () => this.navigate(btn.dataset.view));
@@ -54,6 +54,11 @@ const App = {
         this.navigate('files');
     },
 
+    backToProjects() {
+        this.currentProject = null;
+        this.navigate('projects');
+    },
+
     alert(msg) {
         if (this.tg) this.tg.showAlert(msg);
         else alert(msg);
@@ -65,9 +70,28 @@ const App = {
     },
 
     esc(str) {
+        if (!str) return '';
         const d = document.createElement('div');
         d.textContent = str;
         return d.innerHTML;
+    },
+
+    fmtEuro(cents) {
+        if (!cents) return '0.00';
+        return (cents / 100).toFixed(2);
+    },
+
+    fmtDate(ts) {
+        if (!ts) return '';
+        const d = new Date(ts * 1000);
+        return d.toLocaleDateString('uk-UA') + ' ' + d.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+    },
+
+    fmtSize(bytes) {
+        if (!bytes) return '';
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1048576) return Math.round(bytes / 1024) + ' KB';
+        return (bytes / 1048576).toFixed(1) + ' MB';
     }
 };
 

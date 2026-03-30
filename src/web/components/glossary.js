@@ -14,7 +14,7 @@ const GlossaryView = {
             </div>
             <div id="glossary-actions" style="display:flex;gap:8px;margin-bottom:12px">
                 <button class="btn btn-primary" style="flex:1;padding:8px" onclick="GlossaryView.exportTSV(${project.id})">Експорт TSV</button>
-                <button class="btn btn-secondary" style="flex:1;padding:8px" onclick="GlossaryView.syncDeepL(${project.id})">Sync DeepL</button>
+                <button class="btn btn-secondary" style="flex:1;padding:8px" onclick="GlossaryView.syncGlossary(${project.id})">Синхронізувати</button>
             </div>
             <div id="glossary-stats"></div>
             <div class="term-row header">
@@ -115,10 +115,10 @@ const GlossaryView = {
         } catch (e) { App.alert(e.message); }
     },
 
-    async syncDeepL(pid) {
+    async syncGlossary(pid) {
         try {
-            await API.syncDeepL(pid);
-            App.alert('Глосарій синхронізовано з DeepL!');
+            await API.syncGlossary(pid);
+            App.alert('Глосарій синхронізовано!');
         } catch (e) { App.alert(e.message); }
     }
 };

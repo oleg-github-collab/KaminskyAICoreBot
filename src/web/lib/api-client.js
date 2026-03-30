@@ -69,9 +69,10 @@ const API = {
     approveTerms(pid, termIds) { return this.req('POST', '/projects/' + pid + '/glossary/approve', { term_ids: termIds }); },
     rejectTerms(pid, termIds) { return this.req('POST', '/projects/' + pid + '/glossary/reject', { term_ids: termIds }); },
     exportGlossary(pid, format) { return this.req('GET', '/projects/' + pid + '/glossary/export?format=' + (format || 'tsv')); },
-    syncDeepL(pid) { return this.req('POST', '/projects/' + pid + '/glossary/sync-deepl'); },
+    syncGlossary(pid) { return this.req('POST', '/projects/' + pid + '/glossary/sync'); },
 
     getMessages(pid) { return this.req('GET', '/projects/' + pid + '/messages'); },
     getPricing(pid) { return this.req('GET', '/projects/' + pid + '/pricing'); },
     createInvoice(pid) { return this.req('POST', '/projects/' + pid + '/invoices'); },
+    getInvoices(pid) { return this.req('GET', '/projects/' + pid + '/invoices'); },
 };

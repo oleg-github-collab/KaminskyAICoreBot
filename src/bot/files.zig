@@ -143,13 +143,18 @@ pub fn handleFileMessage(
     const resp = try tg.sendMessage(msg.chat.id, resp_text, null);
     allocator.free(resp);
 
-    // 8. Notify admin
+    // 8. Notify admin with context header
     var admin_buf: [512]u8 = undefined;
-    const admin_text = std.fmt.bufPrint(&admin_buf, "Файл від <b>{s}</b>: {s} ({s})", .{
-        user.first_name, original_name, size_str,
+    const cat_label: []const u8 = if (std.mem.eql(u8, category, "source")) "вихідний" else "референс";
+    const admin_text = std.fmt.bufPrint(&admin_buf, "📎 <b>{s}</b> — {s} ({s})\nТип: {s}", .{
+        user.first_name, original_name, size_str, cat_label,
     }) catch "New file";
     const admin_resp = try tg.sendMessage(admin_chat_id, admin_text, null);
     allocator.free(admin_resp);
+
+    // 9. Forward actual file to admin so they can download it
+    const fwd_resp = try tg.copyMessage(admin_chat_id, msg.chat.id, msg.message_id);
+    allocator.free(fwd_resp);
 }
 
 fn formatFileSize(buf: []u8, size: u64) []const u8 {

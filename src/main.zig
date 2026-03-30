@@ -123,9 +123,10 @@ pub fn main() !void {
     router.post("/api/projects/:project_id/glossary/approve", miniapp_api.handleApproveGlossary, .{});
     router.post("/api/projects/:project_id/glossary/reject", miniapp_api.handleRejectGlossary, .{});
     router.get("/api/projects/:project_id/glossary/export", miniapp_api.handleExportGlossary, .{});
-    router.post("/api/projects/:project_id/glossary/sync-deepl", miniapp_api.handleSyncDeepL, .{});
+    router.post("/api/projects/:project_id/glossary/sync", miniapp_api.handleSyncDeepL, .{});
     router.get("/api/projects/:project_id/messages", miniapp_api.handleMessages, .{});
     router.get("/api/projects/:project_id/pricing", miniapp_api.handlePricing, .{});
+    router.get("/api/projects/:project_id/invoices", miniapp_api.handleListInvoices, .{});
     router.post("/api/projects/:project_id/invoices", miniapp_api.handleCreateInvoice, .{});
 
     std.log.info("Server starting on 0.0.0.0:{d}...", .{config.port});

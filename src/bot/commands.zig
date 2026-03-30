@@ -27,29 +27,32 @@ fn mainMenuKeyboard(allocator: std.mem.Allocator, mini_app_url: []const u8) ![]c
 }
 
 /// Build the project menu keyboard JSON
-fn projectMenuKeyboard(allocator: std.mem.Allocator, project_id: i64) ![]const u8 {
+pub fn projectMenuKeyboard(allocator: std.mem.Allocator, project_id: i64) ![]const u8 {
     _ = project_id;
+    const handler = @import("../webhook/handler.zig");
+    const mini_app_url = handler.app_global.config.mini_app_url;
     return tg_client.buildKeyboard(allocator, &.{
         &.{
             .{ .text = "📤 Вихідні файли", .callback_data = "proj:upload_source" },
             .{ .text = "📥 Референси", .callback_data = "proj:upload_ref" },
         },
         &.{
-            .{ .text = "🔍 Створити глосарій", .callback_data = "proj:glossary" },
+            .{ .text = "🔍 Глосарій", .callback_data = "proj:glossary" },
             .{ .text = "📋 Файли", .callback_data = "proj:files" },
         },
         &.{
-            .{ .text = "👥 Команда", .callback_data = "proj:team" },
             .{ .text = "💰 Вартість", .callback_data = "proj:pricing" },
+            .{ .text = "👥 Команда", .callback_data = "proj:team" },
         },
         &.{
+            .{ .text = "📱 Панель", .web_app_url = mini_app_url },
             .{ .text = "🔙 Назад", .callback_data = "menu:back" },
         },
     });
 }
 
 /// Upload mode keyboard
-fn uploadKeyboard(allocator: std.mem.Allocator) ![]const u8 {
+pub fn uploadKeyboard(allocator: std.mem.Allocator) ![]const u8 {
     return tg_client.buildKeyboard(allocator, &.{
         &.{
             .{ .text = "✅ Завершити завантаження", .callback_data = "upload:done" },
@@ -346,6 +349,8 @@ fn handleUploadDone(
         \\{s}
         \\
         \\Орієнтовна вартість: <b>€{s}</b>
+        \\
+        \\Для зручного управління файлами використовуйте панель (кнопка «Панель» нижче).
     , .{ stats.count, info, price_str }) catch "Upload complete!";
 
     try flow.setUserState(db, user.id, .project_menu, pid);
@@ -380,7 +385,13 @@ fn handleTeamInfo(
         \\Надішліть це посилання вашим колегам.
     , .{ project.name, bot_username, project.invite_code }) catch "Team info";
 
-    const resp = try tg.sendMessage(chat_id, text, null);
+    const kb = try tg_client.buildKeyboard(allocator, &.{
+        &.{
+            .{ .text = "🔙 Назад до проєкту", .callback_data = "proj:back_to_project" },
+        },
+    });
+    defer allocator.free(kb);
+    const resp = try tg.sendMessage(chat_id, text, kb);
     allocator.free(resp);
 }
 
@@ -545,7 +556,7 @@ fn handlePayment(
     try inv_stmt.bindInt(2, user.id);
     try inv_stmt.bindInt(3, amount_cents);
     var desc_buf: [256]u8 = undefined;
-    const desc = std.fmt.bufPrint(&desc_buf, "Project {s}", .{project.name}) catch "Payment";
+    const desc = std.fmt.bufPrint(&desc_buf, "KI Beratung — {s}", .{project.name}) catch "KI Beratung";
     try inv_stmt.bindText(4, desc);
     try inv_stmt.bindText(5, session.id);
     try inv_stmt.bindText(6, session.url);
@@ -628,6 +639,12 @@ fn handleGlossaryRequest(
         \\Після розрахунку вартості ви отримаєте рахунок на оплату.
         \\Обробка розпочнеться після підтвердження оплати.
     , .{project.name}) catch "Glossary requested";
-    const resp = try tg.sendMessage(chat_id, text, null);
+    const kb = try tg_client.buildKeyboard(allocator, &.{
+        &.{
+            .{ .text = "🔙 Назад до проєкту", .callback_data = "proj:back_to_project" },
+        },
+    });
+    defer allocator.free(kb);
+    const resp = try tg.sendMessage(chat_id, text, kb);
     allocator.free(resp);
 }
