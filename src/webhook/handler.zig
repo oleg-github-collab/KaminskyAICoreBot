@@ -168,9 +168,37 @@ fn handleCallbackQuery(a: *App, cbq: *const tg_types.CallbackQuery) !void {
     );
 }
 
-/// POST /stripe-webhook handler
+// ─── Stripe Webhook ────────────────────────────────────────────────────────────
+
+/// POST /stripe-webhook — verifies Stripe-Signature HMAC-SHA256 before processing
 pub fn handleStripeWebhook(req: *httpz.Request, res: *httpz.Response) !void {
-    handleStripeImpl(req) catch |err| {
+    const a = app();
+    const body = req.body() orelse {
+        res.status = 400;
+        res.body = "{\"error\":\"empty body\"}";
+        return;
+    };
+
+    // Signature verification is mandatory in production
+    if (a.config.stripe_webhook_secret.len > 0) {
+        const sig_header = req.header("stripe-signature") orelse {
+            std.log.warn("Stripe: missing Stripe-Signature header", .{});
+            res.status = 400;
+            res.body = "{\"error\":\"missing signature\"}";
+            return;
+        };
+        const verified = verifyStripeSignature(
+            a.allocator, sig_header, body, a.config.stripe_webhook_secret,
+        ) catch false;
+        if (!verified) {
+            std.log.warn("Stripe: invalid signature — rejected", .{});
+            res.status = 403;
+            res.body = "{\"error\":\"invalid signature\"}";
+            return;
+        }
+    }
+
+    handleStripeImpl(body) catch |err| {
         std.log.err("Stripe webhook error: {}", .{err});
         res.status = 500;
         return;
@@ -179,9 +207,64 @@ pub fn handleStripeWebhook(req: *httpz.Request, res: *httpz.Response) !void {
     res.body = "{\"received\":true}";
 }
 
-fn handleStripeImpl(req: *httpz.Request) !void {
+/// Verify Stripe-Signature header using HMAC-SHA256
+/// Header format: "t=<unix_timestamp>,v1=<hex_signature>"
+/// Implements replay-attack protection (5-minute window)
+fn verifyStripeSignature(
+    allocator: std.mem.Allocator,
+    sig_header: []const u8,
+    payload: []const u8,
+    secret: []const u8,
+) !bool {
+    const Hmac = std.crypto.auth.hmac.sha2.HmacSha256;
+
+    var timestamp: ?[]const u8 = null;
+    var v1_sig_hex: ?[]const u8 = null;
+
+    var it = std.mem.splitScalar(u8, sig_header, ',');
+    while (it.next()) |part| {
+        const p = std.mem.trim(u8, part, " ");
+        if (std.mem.startsWith(u8, p, "t=")) {
+            timestamp = p[2..];
+        } else if (std.mem.startsWith(u8, p, "v1=") and v1_sig_hex == null) {
+            v1_sig_hex = p[3..];
+        }
+    }
+
+    const ts = timestamp orelse return false;
+    const expected_hex = v1_sig_hex orelse return false;
+
+    // Replay protection: reject events older than 5 minutes
+    const ts_int = std.fmt.parseInt(i64, ts, 10) catch return false;
+    const now = std.time.timestamp();
+    if (@abs(now - ts_int) > 300) {
+        std.log.warn("Stripe: timestamp too old (replay protection blocked)", .{});
+        return false;
+    }
+
+    // Stripe signed_payload = "<timestamp>.<raw_body>"
+    const signed_payload = try std.fmt.allocPrint(allocator, "{s}.{s}", .{ ts, payload });
+    defer allocator.free(signed_payload);
+
+    // Compute expected HMAC-SHA256
+    var mac: [Hmac.mac_length]u8 = undefined;
+    Hmac.create(&mac, signed_payload, secret);
+
+    // Encode computed MAC to hex
+    var computed_hex_buf: [Hmac.mac_length * 2]u8 = undefined;
+    const computed_hex = try std.fmt.bufPrint(&computed_hex_buf, "{}", .{std.fmt.fmtSliceHexLower(&mac)});
+
+    // Constant-time comparison to prevent timing attacks
+    if (expected_hex.len != computed_hex.len) return false;
+    return std.crypto.utils.timingSafeEql(
+        [Hmac.mac_length * 2]u8,
+        computed_hex[0..Hmac.mac_length * 2].*,
+        expected_hex[0..Hmac.mac_length * 2].*,
+    );
+}
+
+fn handleStripeImpl(body: []const u8) !void {
     const a = app();
-    const body = req.body() orelse return;
 
     const parsed = std.json.parseFromSlice(struct {
         type: ?[]const u8 = null,
@@ -199,6 +282,7 @@ fn handleStripeImpl(req: *httpz.Request) !void {
     defer parsed.deinit();
 
     const event_type = parsed.value.type orelse return;
+    std.log.info("Stripe event received: {s}", .{event_type});
 
     if (std.mem.eql(u8, event_type, "checkout.session.completed")) {
         const obj = (parsed.value.data orelse return).object orelse return;
@@ -214,20 +298,30 @@ fn handleStripeImpl(req: *httpz.Request) !void {
             try stmt.bindText(2, session_id);
             try stmt.exec();
 
-            const metadata = obj.metadata orelse return;
-            var buf: [256]u8 = undefined;
-            const notify = std.fmt.bufPrint(&buf, "Оплата отримана! Session: {s}", .{session_id}) catch "Payment OK";
+            // Notify admin
+            var buf: [320]u8 = undefined;
+            const notify = std.fmt.bufPrint(&buf,
+                "✅ Оплата отримана!\nSession: {s}", .{session_id},
+            ) catch "✅ Payment received";
             const resp = try a.tg.sendMessage(a.config.admin_chat_id, notify, null);
             a.allocator.free(resp);
 
+            // Notify client
+            const metadata = obj.metadata orelse return;
             if (metadata.user_telegram_id) |uid_str| {
                 const uid = std.fmt.parseInt(i64, uid_str, 10) catch return;
-                const cr = try a.tg.sendMessage(uid, "Оплату отримано! Дякуємо! Обробка розпочинається.", null);
+                const cr = try a.tg.sendMessage(
+                    uid,
+                    "✅ Оплату успішно отримано! Дякуємо!\n\nОбробка вашого замовлення розпочинається.",
+                    null,
+                );
                 a.allocator.free(cr);
             }
         }
     }
 }
+
+// ─── Health Check ──────────────────────────────────────────────────────────────
 
 /// GET /health handler
 pub fn handleHealth(_: *httpz.Request, res: *httpz.Response) !void {
