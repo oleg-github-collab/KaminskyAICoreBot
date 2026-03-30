@@ -1,0 +1,17 @@
+.{
+    .fingerprint = 0x5ea617793b3c39e5,
+    .name = .kaminsky_ai_core_bot,
+    .version = "0.1.0",
+    .dependencies = .{
+        .httpz = .{
+            .path = "libs/httpz",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "sql",
+        "web",
+    },
+}
