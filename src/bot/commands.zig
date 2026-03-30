@@ -122,7 +122,7 @@ fn handleJoinInvite(
     user: *const db_users.UserRecord,
     code: []const u8,
 ) !void {
-    const project = try db_projects.getByInviteCode(db, code) orelse {
+    const project = try db_projects.getByInviteCode(allocator, db, code) orelse {
         const resp = try tg.sendMessage(chat_id, "Посилання недійсне або проєкт не знайдено.", null);
         allocator.free(resp);
         return;
@@ -296,7 +296,7 @@ fn selectProject(
     user: *const db_users.UserRecord,
     project_id: i64,
 ) !void {
-    const project = try db_projects.getById(db, project_id) orelse return;
+    const project = try db_projects.getById(allocator, db, project_id) orelse return;
 
     if (!try db_projects.isMember(db, project_id, user.id)) {
         const resp = try tg.sendMessage(chat_id, msgs.error_not_member, null);
@@ -373,7 +373,7 @@ fn handleTeamInfo(
 ) !void {
     const us = try flow.getUserState(db, user.id);
     const pid = us.project_id orelse return;
-    const project = try db_projects.getById(db, pid) orelse return;
+    const project = try db_projects.getById(allocator, db, pid) orelse return;
 
     var buf: [512]u8 = undefined;
     const text = std.fmt.bufPrint(&buf,
@@ -497,7 +497,7 @@ fn handlePayment(
 ) !void {
     const us = try flow.getUserState(db, user.id);
     const pid = us.project_id orelse return;
-    const project = try db_projects.getById(db, pid) orelse return;
+    const project = try db_projects.getById(allocator, db, pid) orelse return;
 
     const db_files = @import("../db/files_db.zig");
     const pricing = @import("../processing/pricing.zig");
@@ -608,7 +608,7 @@ fn handleGlossaryRequest(
 ) !void {
     const us = try flow.getUserState(db, user.id);
     const pid = us.project_id orelse return;
-    const project = try db_projects.getById(db, pid) orelse return;
+    const project = try db_projects.getById(allocator, db, pid) orelse return;
 
     // Check if there are source and reference files
     const source_stats = try @import("../db/files_db.zig").countByProjectCategory(db, pid, "source");

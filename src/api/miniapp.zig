@@ -296,7 +296,7 @@ fn parseProjectAccess(req: *httpz.Request, res: *httpz.Response, user: db_users.
 fn parseProjectAccessImpl(req: *httpz.Request, user: db_users.UserRecord) !ProjectAccess {
     const project_id = parseIntParam(req, "project_id") catch return error.InvalidProjectId;
     const a = app();
-    const project = try db_projects.getById(&a.db, project_id) orelse return error.ProjectNotFound;
+    const project = try db_projects.getById(req.arena, &a.db, project_id) orelse return error.ProjectNotFound;
 
     if (user.is_admin) {
         return .{
@@ -436,10 +436,10 @@ fn createStripeCheckoutSession(
     project_id: i64,
     user_telegram_id: i64,
 ) !StripeSession {
+    // Build form-urlencoded body
     var body = std.ArrayList(u8).init(allocator);
     defer body.deinit();
 
-    // Use stack buffers to avoid allocation leaks
     var success_buf: [512]u8 = undefined;
     const success_url = std.fmt.bufPrint(&success_buf, "{s}?payment=success", .{mini_app_url}) catch "https://example.com/success";
     var cancel_buf: [512]u8 = undefined;
@@ -451,7 +451,7 @@ fn createStripeCheckoutSession(
     var amt_buf: [20]u8 = undefined;
     const amount_str = std.fmt.bufPrint(&amt_buf, "{d}", .{amount_cents}) catch "0";
     var name_buf: [256]u8 = undefined;
-    const item_name = std.fmt.bufPrint(&name_buf, "KI Beratung — {s}", .{project_name}) catch "KI Beratung";
+    const item_name = std.fmt.bufPrint(&name_buf, "KI Beratung \u{2014} {s}", .{project_name}) catch "KI Beratung";
 
     try appendFormField(&body, "mode", "payment");
     try appendFormField(&body, "line_items[0][price_data][currency]", "eur");
@@ -464,37 +464,41 @@ fn createStripeCheckoutSession(
     try appendFormField(&body, "metadata[user_telegram_id]", user_id_str);
     try appendFormField(&body, "client_reference_id", project_id_str);
 
-    std.log.info("Stripe: creating checkout session, amount={d} cents, project={s}", .{ amount_cents, project_name });
+    const form_data = try allocator.dupe(u8, body.items);
+    defer allocator.free(form_data);
 
-    const uri = try std.Uri.parse("https://api.stripe.com/v1/checkout/sessions");
+    var auth_header_buf: [512]u8 = undefined;
+    const auth_header = std.fmt.bufPrint(&auth_header_buf, "Authorization: Bearer {s}", .{secret_key}) catch return error.StripeSessionFailed;
 
-    var auth_buf: [256]u8 = undefined;
-    const auth = try std.fmt.bufPrint(&auth_buf, "Bearer {s}", .{secret_key});
+    std.log.info("Stripe: creating checkout via curl, amount={d} cents, project={s}", .{ amount_cents, project_name });
 
-    var client = std.http.Client{ .allocator = allocator };
-    defer client.deinit();
-
-    var header_buf: [8192]u8 = undefined;
-    var req = try client.open(.POST, uri, .{
-        .server_header_buffer = &header_buf,
-        .extra_headers = &.{
-            .{ .name = "Authorization", .value = auth },
-            .{ .name = "Content-Type", .value = "application/x-www-form-urlencoded" },
+    // Use curl for bulletproof HTTPS — Zig's TLS can fail in Docker
+    const result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{
+            "curl", "-s", "--max-time", "30",
+            "-X", "POST",
+            "-H", auth_header,
+            "-H", "Content-Type: application/x-www-form-urlencoded",
+            "-d", form_data,
+            "https://api.stripe.com/v1/checkout/sessions",
         },
-    });
-    defer req.deinit();
+        .max_output_bytes = 1024 * 1024,
+    }) catch |err| {
+        std.log.err("Stripe: curl spawn failed: {}", .{err});
+        return error.StripeSessionFailed;
+    };
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
 
-    req.transfer_encoding = .{ .content_length = body.items.len };
-    try req.send();
-    try req.writer().writeAll(body.items);
-    try req.finish();
-    try req.wait();
+    if (result.stdout.len == 0) {
+        std.log.err("Stripe: curl returned empty response, stderr: {s}", .{result.stderr[0..@min(result.stderr.len, 500)]});
+        return error.StripeSessionFailed;
+    }
 
-    // Response body is NOT freed because parsed data points into it
-    const response_body = try req.reader().readAllAlloc(allocator, 1024 * 1024);
+    std.log.info("Stripe curl response ({d} bytes): {s}", .{ result.stdout.len, result.stdout[0..@min(result.stdout.len, 500)] });
 
-    std.log.info("Stripe response: {s}", .{response_body[0..@min(response_body.len, 300)]});
-
+    // Parse response — stdout contains JSON from Stripe
     const parsed = std.json.parseFromSliceLeaky(struct {
         id: ?[]const u8 = null,
         url: ?[]const u8 = null,
@@ -502,24 +506,34 @@ fn createStripeCheckoutSession(
             message: ?[]const u8 = null,
             type: ?[]const u8 = null,
         } = null,
-    }, allocator, response_body, .{
+    }, allocator, result.stdout, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
-        std.log.err("Stripe JSON parse error: {}", .{err});
+        std.log.err("Stripe JSON parse error: {}, raw: {s}", .{ err, result.stdout[0..@min(result.stdout.len, 200)] });
         return error.StripeSessionFailed;
     };
 
     if (parsed.@"error") |stripe_error| {
-        std.log.err("Stripe session error: {s} (type: {s})", .{
+        std.log.err("Stripe API error: {s} (type: {s})", .{
             stripe_error.message orelse "unknown",
             stripe_error.type orelse "unknown",
         });
         return error.StripeSessionFailed;
     }
 
+    const session_id = parsed.id orelse {
+        std.log.err("Stripe: no id in response", .{});
+        return error.StripeSessionFailed;
+    };
+    const session_url = parsed.url orelse {
+        std.log.err("Stripe: no url in response", .{});
+        return error.StripeSessionFailed;
+    };
+
+    // Dupe into allocator so they survive after stdout is freed
     return .{
-        .id = parsed.id orelse return error.StripeSessionFailed,
-        .url = parsed.url orelse return error.StripeSessionFailed,
+        .id = try allocator.dupe(u8, session_id),
+        .url = try allocator.dupe(u8, session_url),
     };
 }
 
@@ -749,12 +763,18 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
     var page_count: i64 = 0;
     var price_cents: i64 = 0;
 
-    if (isPdf(original_name)) {
+    const is_pdf = isPdf(original_name) or pricing.isPdfContent(file_field.value);
+    if (is_pdf) {
         page_count = @intCast(pricing.countPdfPages(file_field.value));
         price_cents = pricing.priceForPages(@intCast(page_count));
-    } else {
+    } else if (pricing.isTextContent(file_field.value)) {
+        // Actual text content → accurate character counting
         char_count = @intCast(pricing.countChars(file_field.value));
         price_cents = pricing.priceForChars(@intCast(char_count));
+    } else {
+        // Binary document (.docx, .doc, etc.) → estimate pages
+        page_count = @intCast(pricing.estimateDocPages(file_field.value.len));
+        price_cents = pricing.priceForPages(@intCast(page_count));
     }
 
     const file_id = try db_files.store(

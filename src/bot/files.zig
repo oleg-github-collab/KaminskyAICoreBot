@@ -85,33 +85,33 @@ pub fn handleFileMessage(
         return;
     };
 
-    // 5. Calculate pricing
+    // 5. Calculate pricing — read file content to determine type and count
     var char_count: i64 = 0;
     var page_count: i64 = 0;
     var price_cents: i64 = 0;
 
-    if (mime != null and std.mem.eql(u8, mime.?, "application/pdf")) {
-        // Read file for PDF page count
-        const file = std.fs.openFileAbsolute(store_path, .{}) catch null;
-        if (file) |f| {
-            defer f.close();
-            const data = f.readToEndAlloc(allocator, 50 * 1024 * 1024) catch null;
-            if (data) |d| {
-                defer allocator.free(d);
+    const file = std.fs.openFileAbsolute(store_path, .{}) catch null;
+    if (file) |f| {
+        defer f.close();
+        const data = f.readToEndAlloc(allocator, 50 * 1024 * 1024) catch null;
+        if (data) |d| {
+            defer allocator.free(d);
+
+            const is_pdf = (mime != null and std.mem.eql(u8, mime.?, "application/pdf")) or
+                pricing.isPdfContent(d);
+
+            if (is_pdf) {
+                // PDF → count pages
                 page_count = @intCast(pricing.countPdfPages(d));
                 price_cents = pricing.priceForPages(@intCast(page_count));
-            }
-        }
-    } else {
-        // Read file for character count (text-based files)
-        const file = std.fs.openFileAbsolute(store_path, .{}) catch null;
-        if (file) |f| {
-            defer f.close();
-            const data = f.readToEndAlloc(allocator, 10 * 1024 * 1024) catch null;
-            if (data) |d| {
-                defer allocator.free(d);
+            } else if (pricing.isTextContent(d)) {
+                // Actual text file → accurate character counting
                 char_count = @intCast(pricing.countChars(d));
                 price_cents = pricing.priceForChars(@intCast(char_count));
+            } else {
+                // Binary document (.docx, .doc, etc.) → estimate pages
+                page_count = @intCast(pricing.estimateDocPages(d.len));
+                price_cents = pricing.priceForPages(@intCast(page_count));
             }
         }
     }

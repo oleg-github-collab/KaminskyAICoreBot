@@ -16,12 +16,12 @@ pub fn create(allocator: std.mem.Allocator, db: *sqlite.Db, owner_id: i64, name:
     const now = std.time.timestamp();
 
     // Generate invite code
-    var code_bytes: [12]u8 = undefined;
+    var code_bytes: [16]u8 = undefined;
     std.crypto.random.bytes(&code_bytes);
     var invite_code: [16]u8 = undefined;
     const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     for (&invite_code, 0..) |*ch, i| {
-        ch.* = chars[code_bytes[i % 12] % chars.len];
+        ch.* = chars[code_bytes[i] % chars.len];
     }
 
     var stmt = try db.prepare(
@@ -60,7 +60,8 @@ pub fn create(allocator: std.mem.Allocator, db: *sqlite.Db, owner_id: i64, name:
     };
 }
 
-pub fn getById(db: *sqlite.Db, project_id: i64) !?ProjectRecord {
+/// Get project by ID. Strings are duped into allocator and survive after statement finalization.
+pub fn getById(allocator: std.mem.Allocator, db: *sqlite.Db, project_id: i64) !?ProjectRecord {
     var stmt = try db.prepare(
         "SELECT id, owner_id, name, description, source_lang, target_lang, invite_code, is_active FROM projects WHERE id = ?",
     );
@@ -68,21 +69,24 @@ pub fn getById(db: *sqlite.Db, project_id: i64) !?ProjectRecord {
     try stmt.bindInt(1, project_id);
 
     if (try stmt.step()) {
+        // Dupe all text columns — sqlite3_column_text returns pointers into statement buffer,
+        // which becomes invalid after stmt.deinit(). Without duping, callers get use-after-free.
         return ProjectRecord{
             .id = stmt.columnInt(0),
             .owner_id = stmt.columnInt(1),
-            .name = stmt.columnText(2) orelse "",
-            .description = stmt.columnText(3) orelse "",
-            .source_lang = stmt.columnText(4) orelse "EN",
-            .target_lang = stmt.columnText(5) orelse "UK",
-            .invite_code = stmt.columnText(6) orelse "",
+            .name = try dupCol(allocator, stmt.columnText(2)),
+            .description = try dupCol(allocator, stmt.columnText(3)),
+            .source_lang = try dupCol(allocator, stmt.columnText(4)),
+            .target_lang = try dupCol(allocator, stmt.columnText(5)),
+            .invite_code = try dupCol(allocator, stmt.columnText(6)),
             .is_active = stmt.columnInt(7) == 1,
         };
     }
     return null;
 }
 
-pub fn getByInviteCode(db: *sqlite.Db, code: []const u8) !?ProjectRecord {
+/// Get project by invite code. Strings are duped into allocator.
+pub fn getByInviteCode(allocator: std.mem.Allocator, db: *sqlite.Db, code: []const u8) !?ProjectRecord {
     var stmt = try db.prepare(
         "SELECT id, owner_id, name, description, source_lang, target_lang, invite_code, is_active FROM projects WHERE invite_code = ?",
     );
@@ -93,11 +97,11 @@ pub fn getByInviteCode(db: *sqlite.Db, code: []const u8) !?ProjectRecord {
         return ProjectRecord{
             .id = stmt.columnInt(0),
             .owner_id = stmt.columnInt(1),
-            .name = stmt.columnText(2) orelse "",
-            .description = stmt.columnText(3) orelse "",
-            .source_lang = stmt.columnText(4) orelse "EN",
-            .target_lang = stmt.columnText(5) orelse "UK",
-            .invite_code = stmt.columnText(6) orelse "",
+            .name = try dupCol(allocator, stmt.columnText(2)),
+            .description = try dupCol(allocator, stmt.columnText(3)),
+            .source_lang = try dupCol(allocator, stmt.columnText(4)),
+            .target_lang = try dupCol(allocator, stmt.columnText(5)),
+            .invite_code = try dupCol(allocator, stmt.columnText(6)),
             .is_active = stmt.columnInt(7) == 1,
         };
     }
@@ -123,4 +127,13 @@ pub fn addMember(db: *sqlite.Db, project_id: i64, user_id: i64) !void {
     try stmt.bindInt(2, user_id);
     try stmt.bindInt(3, std.time.timestamp());
     try stmt.exec();
+}
+
+/// Dupe a nullable column text into allocator. Returns "" for null.
+fn dupCol(allocator: std.mem.Allocator, text: ?[]const u8) ![]const u8 {
+    if (text) |t| {
+        if (t.len == 0) return "";
+        return allocator.dupe(u8, t);
+    }
+    return "";
 }
