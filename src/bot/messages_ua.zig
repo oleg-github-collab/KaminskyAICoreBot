@@ -14,12 +14,12 @@ pub const help =
     \\1. <b>Створіть проєкт</b> — натисніть "Новий проєкт" та вкажіть назву
     \\2. <b>Завантажте вихідні файли</b> — тексти або PDF для обробки
     \\3. <b>Завантажте референсні файли</b> — вже перекладені версії
-    \\4. <b>Створіть глосарій</b> — система проаналізує файли та створить професійний глосарій термінів
+    \\4. <b>Замовте глосарій</b> — ми підготуємо професійний глосарій термінів на основі ваших файлів
     \\5. <b>Оплатіть послугу</b> — після розрахунку вартості
     \\
     \\<b>Вартість:</b>
     \\• Текстові файли: €0.58 за кожні 1800 символів
-    \\• PDF файли: €0.69 за сторінку
+    \\• PDF файли: €0.89 за сторінку
     \\
     \\Натисніть "Написати нам" для зв'язку зі спеціалістом.
 ;
@@ -90,9 +90,9 @@ pub const chat_mode_started =
 pub const message_forwarded = "Ваше повідомлення передано спеціалісту. Очікуйте відповідь.";
 
 pub const glossary_started =
-    \\Запущено створення глосарію для проєкту <b>{s}</b>.
+    \\Глосарій для проєкту <b>{s}</b> в роботі.
     \\
-    \\Наша система аналізує вихідні та референсні файли для виявлення професійних термінів. Це може зайняти деякий час.
+    \\Ваші файли передані спеціалісту для підготовки глосарію. Це може зайняти деякий час.
     \\
     \\Ми повідомимо вас, коли глосарій буде готовий.
 ;
@@ -102,7 +102,7 @@ pub const glossary_ready =
     \\
     \\Знайдено <b>{d}</b> професійних термінів.
     \\
-    \\Наш спеціаліст перевірить глосарій, після чого ви зможете переглянути його в панелі управління.
+    \\Ви зможете переглянути та завантажити глосарій у панелі управління.
 ;
 
 pub const glossary_approved =
@@ -155,7 +155,7 @@ pub const admin_new_user = "Новий користувач: <b>{s} {s}</b> (@{s
 pub const admin_new_file = "Новий файл від <b>{s}</b> в проєкті <b>{s}</b>:\n{s} ({s})";
 pub const admin_new_message = "Повідомлення від <b>{s} {s}</b> (@{s}):";
 pub const admin_payment = "Оплата отримана: <b>€{s}</b> від {s} за проєкт {s}";
-pub const admin_glossary_ready = "Глосарій готовий для перевірки!\nПроєкт: <b>{s}</b>\nТермінів: <b>{d}</b>";
+pub const admin_glossary_ready = "Готовий глосарій!\nПроєкт: <b>{s}</b>\nТермінів: <b>{d}</b>\nПерегляньте та вирішіть як діяти далі.";
 
 // Chatbot system context (NEVER show to users)
 pub const chatbot_system_prompt =
@@ -173,8 +173,8 @@ pub const chatbot_system_prompt =
     \\
     \\SERVICE INFO:
     \\- Clients upload source files (text, PDF) and reference translations
-    \\- The system creates professional glossaries of terms
-    \\- Pricing: €0.58 per 1800 characters (text), €0.69 per page (PDF)
+    \\- Our specialists prepare professional glossaries of terms based on uploaded files
+    \\- Pricing: €0.58 per 1800 characters (text), €0.89 per page (PDF)
     \\- Payment is required before processing begins
     \\- Clients can create projects, invite team members, and manage files
     \\- Glossaries are reviewed by specialists before being shared

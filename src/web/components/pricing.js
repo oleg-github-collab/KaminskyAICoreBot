@@ -16,7 +16,7 @@ const PricingView = {
                         <span>Текстові файли</span><b>\u20ac0.58 / 1800 символів</b>
                     </div>
                     <div style="display:flex;justify-content:space-between;padding:4px 0">
-                        <span>PDF файли</span><b>\u20ac0.69 / сторінка</b>
+                        <span>PDF файли</span><b>\u20ac0.89 / сторінка</b>
                     </div>
                 </div>
             </div>

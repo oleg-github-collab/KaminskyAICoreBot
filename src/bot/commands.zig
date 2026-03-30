@@ -423,7 +423,7 @@ fn handlePricing(
         \\Референсних файлів: {d}
         \\
         \\Текстові файли: €0.58 за 1800 символів
-        \\PDF файли: €0.69 за сторінку
+        \\PDF файли: €0.89 за сторінку
         \\
         \\<b>Загальна вартість: €{s}</b>
     , .{ source_stats.count, ref_stats.count, price_str }) catch "Pricing info";
@@ -634,10 +634,10 @@ fn handleGlossaryRequest(
 
     var buf: [256]u8 = undefined;
     const text = std.fmt.bufPrint(&buf,
-        \\Запит на створення глосарію для проєкту <b>{s}</b> отримано!
+        \\Запит на глосарій для проєкту <b>{s}</b> прийнято!
         \\
-        \\Після розрахунку вартості ви отримаєте рахунок на оплату.
-        \\Обробка розпочнеться після підтвердження оплати.
+        \\Спеціаліст підготує глосарій на основі ваших файлів.
+        \\Ми повідомимо вас, коли він буде готовий.
     , .{project.name}) catch "Glossary requested";
     const kb = try tg_client.buildKeyboard(allocator, &.{
         &.{
