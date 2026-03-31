@@ -6,7 +6,7 @@ ARG SQLITE_YEAR=2024
 ARG SQLITE_VERSION=3460100
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl xz-utils ca-certificates git unzip && \
+    curl xz-utils ca-certificates git unzip libhiredis-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Zig
