@@ -126,6 +126,7 @@ pub fn main() !void {
     router.get("/app/lib/history.js", serveHistoryJS, .{});
     router.get("/app/components/projects.js", serveProjectsJS, .{});
     router.get("/app/components/files.js", serveFilesJS, .{});
+    router.get("/app/components/file-viewer.js", serveFileViewerJS, .{});
     router.get("/app/components/team.js", serveTeamJS, .{});
     router.get("/app/components/glossary.js", serveGlossaryJS, .{});
     router.get("/app/components/pricing.js", servePricingJS, .{});
@@ -157,8 +158,11 @@ pub fn main() !void {
     router.get("/api/projects", miniapp_api.handleProjects, .{});
     router.post("/api/projects", miniapp_api.handleCreateProject, .{});
     router.get("/api/projects/:project_id", miniapp_api.handleGetProject, .{});
+    router.patch("/api/projects/:project_id", miniapp_api.handleUpdateProject, .{});
+    router.delete("/api/projects/:project_id", miniapp_api.handleDeleteProject, .{});
     router.get("/api/projects/:project_id/files", miniapp_api.handleListFiles, .{});
     router.post("/api/projects/:project_id/files", miniapp_api.handleUploadFile, .{});
+    router.get("/api/projects/:project_id/files/:file_id/content", miniapp_api.handleGetFileContent, .{});
     router.delete("/api/projects/:project_id/files/:file_id", miniapp_api.handleDeleteFile, .{});
     router.get("/api/projects/:project_id/team", miniapp_api.handleListTeam, .{});
     router.post("/api/projects/:project_id/team/invite", miniapp_api.handleCreateInvite, .{});
@@ -171,7 +175,6 @@ pub fn main() !void {
     router.post("/api/projects/:project_id/glossary/sync", miniapp_api.handleSyncDeepL, .{});
     router.get("/api/projects/:project_id/messages", miniapp_api.handleMessages, .{});
     router.post("/api/projects/:project_id/messages", miniapp_api.handleSendMessage, .{});
-    router.get("/api/projects/:project_id/messages/stream", miniapp_api.handleMessageStream, .{});
     router.get("/api/projects/:project_id/pricing", miniapp_api.handlePricing, .{});
     router.get("/api/projects/:project_id/invoices", miniapp_api.handleListInvoices, .{});
     router.post("/api/projects/:project_id/invoices", miniapp_api.handleCreateInvoice, .{});
@@ -219,6 +222,11 @@ fn serveFilesJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
     res.body = @embedFile("web/components/files.js");
+}
+fn serveFileViewerJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/file-viewer.js");
 }
 fn serveTeamJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;

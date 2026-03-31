@@ -400,3 +400,76 @@ pub fn checkBatch(
 
     return result.stdout;
 }
+
+/// Extract text content from document for quoting.
+pub fn extractText(
+    allocator: std.mem.Allocator,
+    config: *const config_mod.Config,
+    file_path: []const u8,
+    original_name: []const u8,
+) ![]const u8 {
+    const processor_url = config.processor_url;
+    if (processor_url.len == 0) return error.ProcessorNotConfigured;
+
+    var url_buf: [512]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "{s}/extract-text", .{processor_url});
+
+    std.log.info("Processor: POST {s} file={s}", .{ url, original_name });
+
+    const auth_header = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key});
+    defer allocator.free(auth_header);
+    const file_arg = try std.fmt.allocPrint(allocator, "file=@{s};filename={s}", .{ file_path, original_name });
+    defer allocator.free(file_arg);
+
+    const result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{
+            "curl",
+            "-s",
+            "-f",
+            "--connect-timeout",
+            "10",
+            "--max-time",
+            "120",
+            "-X",
+            "POST",
+            "-H",
+            auth_header,
+            "-F",
+            file_arg,
+            url,
+        },
+    });
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+
+    const exited_ok = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!exited_ok) {
+        std.log.err("Processor /extract-text failed, stderr: {s}", .{result.stderr});
+        return error.ProcessorCallFailed;
+    }
+
+    if (result.stdout.len == 0) {
+        std.log.err("Processor /extract-text: empty response", .{});
+        return error.InvalidProcessorResponse;
+    }
+
+    // Parse JSON response
+    const parsed = std.json.parseFromSlice(struct {
+        text: ?[]const u8 = null,
+        length: ?i64 = null,
+    }, allocator, result.stdout, .{ .ignore_unknown_fields = true }) catch {
+        std.log.err("Processor /extract-text: invalid JSON response: {s}", .{result.stdout});
+        return error.InvalidProcessorResponse;
+    };
+    defer parsed.deinit();
+
+    if (parsed.value.text) |text| {
+        return try allocator.dupe(u8, text);
+    }
+
+    return error.NoTextExtracted;
+}

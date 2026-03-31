@@ -26,11 +26,27 @@ const ProjectsView = {
             } else {
                 html += projects.map(p => `
                     <div class="card" style="cursor:pointer" onclick='ProjectsView.select(${JSON.stringify(p).replace(/'/g, "\\'")})'>
-                        <div style="display:flex;justify-content:space-between;align-items:center">
-                            <div class="card-title">${App.esc(p.name)}</div>
-                            <span class="card-badge">${App.esc(p.role)}</span>
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                            <div style="flex:1">
+                                <div class="card-title">${App.esc(p.name)}</div>
+                                <div class="card-sub" style="margin-top:4px">${App.esc(p.description || (p.source_lang && p.target_lang ? p.source_lang + ' \u2192 ' + p.target_lang : ''))}</div>
+                            </div>
+                            <div style="display:flex;gap:6px;flex-shrink:0;margin-left:8px;align-items:center">
+                                <span class="card-badge">${App.esc(p.role)}</span>
+                                ${p.role === 'owner' ? `
+                                    <button class="btn btn-secondary btn-icon"
+                                            onclick="event.stopPropagation(); ProjectsView.editProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}', '${App.esc(p.description || '').replace(/'/g, "\\'")}')"
+                                            data-tooltip="Редагувати">
+                                        ✏️
+                                    </button>
+                                    <button class="btn btn-danger btn-icon"
+                                            onclick="event.stopPropagation(); ProjectsView.deleteProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}')"
+                                            data-tooltip="Видалити">
+                                        🗑️
+                                    </button>
+                                ` : ''}
+                            </div>
                         </div>
-                        <div class="card-sub" style="margin-top:4px">${App.esc(p.description || (p.source_lang && p.target_lang ? p.source_lang + ' \u2192 ' + p.target_lang : ''))}</div>
                     </div>
                 `).join('');
             }
@@ -59,5 +75,73 @@ const ProjectsView = {
                 this.render(document.getElementById('content'));
             }
         } catch (e) { App.alert(e.message); }
+    },
+
+    async editProject(projectId, currentName, currentDescription) {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal">
+                <h3>Редагувати проєкт</h3>
+                <form id="edit-project-form">
+                    <div style="margin-bottom:12px">
+                        <label class="label">Назва проєкту:</label>
+                        <input type="text" id="edit-name" class="input" value="${App.esc(currentName)}" required maxlength="100">
+                    </div>
+                    <div style="margin-bottom:16px">
+                        <label class="label">Опис (необов'язково):</label>
+                        <textarea id="edit-desc" class="input" rows="3" maxlength="500">${App.esc(currentDescription)}</textarea>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Скасувати</button>
+                        <button type="submit" class="btn btn-primary">Зберегти</button>
+                    </div>
+                </form>
+            </div>`;
+
+        document.body.appendChild(overlay);
+
+        overlay.querySelector('form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('edit-name').value.trim();
+            const description = document.getElementById('edit-desc').value.trim();
+
+            if (!name) {
+                App.toast('Назва не може бути порожньою', 'warning');
+                return;
+            }
+
+            try {
+                await API.updateProject(projectId, { name, description });
+                overlay.remove();
+                this.render(document.getElementById('content'));
+                App.toast('Проєкт оновлено', 'success');
+            } catch (err) {
+                App.toast(err.message, 'error');
+            }
+        });
+
+        // Close on background click
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) overlay.remove();
+        });
+    },
+
+    async deleteProject(projectId, projectName) {
+        App.modalConfirm(
+            'Видалити проєкт?',
+            `Ви впевнені, що хочете видалити проєкт "${projectName}"? Це видалить усі файли, глосарії та повідомлення. Цю дію не можна скасувати.`,
+            async () => {
+                try {
+                    await API.deleteProject(projectId);
+                    this.render(document.getElementById('content'));
+                    App.toast('Проєкт видалено', 'success');
+                } catch (err) {
+                    App.toast(err.message, 'error');
+                }
+            },
+            'Видалити',
+            'Скасувати'
+        );
     }
 };

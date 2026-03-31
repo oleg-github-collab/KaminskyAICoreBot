@@ -5,6 +5,8 @@ const db_users = @import("../db/users.zig");
 const db_messages = @import("../db/messages_db.zig");
 const sqlite = @import("../db/sqlite.zig");
 const msgs = @import("messages_ua.zig");
+const websocket = @import("../realtime/websocket.zig");
+const handler = @import("../webhook/handler.zig");
 
 /// Handle a free-text message from client -> relay to admin
 pub fn handleClientMessage(
@@ -93,7 +95,7 @@ pub fn handleAdminReply(
     } else |_| {}
 
     // Store admin->client message
-    _ = try db_messages.storeMessage(
+    const message_id = try db_messages.storeMessage(
         db,
         original.project_id,
         0, // admin
@@ -105,4 +107,18 @@ pub fn handleAdminReply(
         relayed_msg_id,
         original.sender_telegram_id,
     );
+
+    // Broadcast to WebSocket clients
+    const a = handler.app();
+    if (a.redis != null and original.project_id != null) {
+        websocket.broadcastMessage(
+            allocator,
+            a.redis,
+            original.project_id.?,
+            0, // admin user_id
+            msg.text orelse msg.caption orelse "[media]",
+        ) catch |err| {
+            std.log.warn("Failed to broadcast admin message via WebSocket: {any}", .{err});
+        };
+    }
 }

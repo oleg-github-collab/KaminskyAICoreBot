@@ -28,6 +28,7 @@ const API = {
     getProjects() { return this.req('GET', '/projects'); },
     createProject(name, desc) { return this.req('POST', '/projects', { name, description: desc }); },
     getProject(id) { return this.req('GET', '/projects/' + id); },
+    updateProject(id, data) { return this.req('PATCH', '/projects/' + id, data); },
     deleteProject(id) { return this.req('DELETE', '/projects/' + id); },
 
     // Files
@@ -35,6 +36,7 @@ const API = {
         const q = cat ? '?category=' + cat : '';
         return this.req('GET', '/projects/' + pid + '/files' + q);
     },
+    getFileContent(pid, fid) { return this.req('GET', '/projects/' + pid + '/files/' + fid + '/content'); },
     deleteFile(pid, fid) { return this.req('DELETE', '/projects/' + pid + '/files/' + fid); },
     async uploadFiles(pid, files, category, onProgress) {
         const CONCURRENT = 5;

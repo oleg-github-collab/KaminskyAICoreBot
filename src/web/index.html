@@ -15,7 +15,15 @@
 <body>
     <div id="app">
         <header id="header">
-            <h1 id="app-title">KI Beratung</h1>
+            <div class="header-content">
+                <div class="header-left">
+                    <h1 id="app-title">KI Beratung</h1>
+                    <div id="breadcrumb" class="breadcrumb"></div>
+                </div>
+                <div class="header-right">
+                    <div id="project-info" class="project-info"></div>
+                </div>
+            </div>
             <nav id="nav"></nav>
         </header>
         <main id="content">
@@ -39,6 +47,7 @@
     <!-- View Components -->
     <script src="/app/components/projects.js"></script>
     <script src="/app/components/files.js"></script>
+    <script src="/app/components/file-viewer.js"></script>
     <script src="/app/components/team.js"></script>
     <script src="/app/components/glossary.js"></script>
     <script src="/app/components/glossary-versions.js"></script>

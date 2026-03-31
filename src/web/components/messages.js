@@ -27,11 +27,16 @@ const MessagesView = {
                 </div>
                 <div class="chat-input-area" style="flex-direction:column;align-items:stretch">
                     <div id="quill-editor" style="min-height:60px;background:var(--bg-secondary);border-radius:6px;margin-bottom:8px"></div>
-                    <button class="btn btn-primary" style="width:100px;align-self:flex-end" onclick="MessagesView.send(${project.id})">Відправити ➤</button>
+                    <button class="btn btn-primary btn-send" id="send-btn" style="width:auto;min-width:120px;align-self:flex-end" onclick="MessagesView.send(${project.id})">
+                        <span class="btn-text">Відправити</span>
+                        <span class="btn-spinner" style="display:none">
+                            <span class="spinner"></span>
+                        </span>
+                    </button>
                 </div>
             </div>`;
         await this.loadMessages(project.id);
-        this.connectSSE(project.id);
+        this.connectWebSocket(project.id);
         this.initQuill();
     },
 
@@ -99,29 +104,29 @@ const MessagesView = {
             </div>`;
     },
 
-    connectSSE(pid) {
+    connectWebSocket(pid) {
         this.disconnect();
         const status = document.getElementById('connection-status');
         if (status) status.textContent = '🟡 Підключення...';
 
         try {
             this.eventSource = API.connectMessageStream(pid,
-                (data) => this.handleSSEMessage(data),
-                () => this.handleSSEError()
+                (data) => this.handleWebSocketMessage(data),
+                () => this.handleWebSocketError()
             );
             setTimeout(() => {
-                if (status && this.eventSource && this.eventSource.readyState === EventSource.OPEN) {
+                if (status && this.eventSource && this.eventSource.readyState === 1) {
                     status.textContent = '🟢 Підключено';
                     setTimeout(() => { if (status) status.textContent = ''; }, 2000);
                 }
             }, 500);
         } catch (e) {
-            console.error('SSE connection failed:', e);
+            console.error('WebSocket connection failed:', e);
             if (status) status.textContent = '🔴 Помилка підключення';
         }
     },
 
-    handleSSEMessage(data) {
+    handleWebSocketMessage(data) {
         if (data.type === 'message' && data.message) {
             const m = data.message;
             if (m.message_uuid && this.seenUuids.has(m.message_uuid)) return;
@@ -161,12 +166,12 @@ const MessagesView = {
         }
     },
 
-    handleSSEError() {
+    handleWebSocketError() {
         const status = document.getElementById('connection-status');
         if (status) status.textContent = '🔴 Підключення втрачено';
         // Attempt reconnect after 3s
         setTimeout(() => {
-            if (this.currentPid) this.connectSSE(this.currentPid);
+            if (this.currentPid) this.connectWebSocket(this.currentPid);
         }, 3000);
     },
 
@@ -198,6 +203,10 @@ const MessagesView = {
     async send(pid) {
         if (!this.quill) return;
 
+        const btn = document.getElementById('send-btn');
+        const btnText = btn ? btn.querySelector('.btn-text') : null;
+        const btnSpinner = btn ? btn.querySelector('.btn-spinner') : null;
+
         const html = this.quill.root.innerHTML;
         const text = this.quill.getText().trim();
 
@@ -205,6 +214,11 @@ const MessagesView = {
             App.toast('Повідомлення не може бути порожнім', 'warning');
             return;
         }
+
+        // Show loading state
+        if (btn) btn.disabled = true;
+        if (btnText) btnText.style.display = 'none';
+        if (btnSpinner) btnSpinner.style.display = 'inline-block';
 
         // Clear editor and disable
         const oldHtml = html;
@@ -240,9 +254,14 @@ const MessagesView = {
         } catch (e) {
             App.toast(e.message, 'error');
             this.quill.root.innerHTML = oldHtml;
-        }
+        } finally {
+            // Reset button state
+            if (btn) btn.disabled = false;
+            if (btnText) btnText.style.display = 'inline';
+            if (btnSpinner) btnSpinner.style.display = 'none';
 
-        this.quill.enable(true);
-        this.quill.focus();
+            this.quill.enable(true);
+            this.quill.focus();
+        }
     }
 };

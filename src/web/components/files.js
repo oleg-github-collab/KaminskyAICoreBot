@@ -103,7 +103,19 @@ const FilesView = {
                             ${f.estimated_price_cents ? ' \u00b7 \u20ac' + App.fmtEuro(f.estimated_price_cents) : ''}
                         </div>
                     </div>
-                    <button class="btn" style="width:auto;padding:4px 10px;font-size:12px;color:#ff3b30" onclick="FilesView.deleteFile(${pid},${f.id},'${App.esc(f.original_name)}')">\u2715</button>
+                    <div style="display:flex;gap:4px">
+                        <button class="btn btn-secondary btn-sm"
+                                onclick="FileViewer.show(${pid}, ${f.id}, '${App.esc(f.original_name).replace(/'/g, "\\'")}')"
+                                data-tooltip="Переглянути текст">
+                            \ud83d\udc41\ufe0f
+                        </button>
+                        <button class="btn btn-sm"
+                                style="color:#ff3b30"
+                                onclick="FilesView.deleteFile(${pid},${f.id},'${App.esc(f.original_name).replace(/'/g, "\\'")}')"
+                                data-tooltip="Видалити">
+                            \u2715
+                        </button>
+                    </div>
                 </div>
             `).join('');
         } catch (e) {

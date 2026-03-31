@@ -150,31 +150,39 @@ const GlossaryView = {
                     <input type="checkbox" class="term-checkbox" data-id="${t.id}"
                         ${isSelected ? 'checked' : ''}
                         onchange="GlossaryView.toggleSelect(${t.id}, this.checked)">
-                    <span class="drag-handle" style="cursor:move;font-size:16px">⠿</span>
+                    <span class="drag-handle" data-tooltip="Перетягніть для зміни порядку" style="cursor:move;font-size:16px;line-height:1">⋮⋮</span>
                 </div>
                 <div class="term-source">
                     ${App.esc(t.source_term)}
                     ${t.domain ? `<div style="margin-top:4px"><span class="domain-tag">${App.esc(t.domain)}</span></div>` : ''}
                 </div>
-                <div class="term-target" ondblclick="GlossaryView.startEdit(${t.id}, '${App.esc(t.target_term).replace(/'/g, "\\'")}')">
+                <div class="term-target">
                     ${isEditing
                         ? `<input type="text" class="term-edit-input" id="edit-input-${t.id}" value="${App.esc(t.target_term)}"
                             onkeydown="if(event.key==='Enter')GlossaryView.saveEdit(${t.id});if(event.key==='Escape')GlossaryView.cancelEdit()"
                             onblur="GlossaryView.cancelEdit()">`
-                        : `<div>${App.esc(t.target_term)}</div>
-                           <div class="confidence-bar" style="margin-top:4px">
+                        : `<div class="term-target-content">
+                               <div class="term-target-text" ondblclick="GlossaryView.startEdit(${t.id}, '${App.esc(t.target_term).replace(/'/g, "\\'")}')">
+                                   ${App.esc(t.target_term)}
+                               </div>
+                               <button class="btn-edit-inline"
+                                       onclick="event.stopPropagation(); GlossaryView.startEdit(${t.id}, '${App.esc(t.target_term).replace(/'/g, "\\'")}')">
+                                   ✎
+                               </button>
+                           </div>
+                           <div class="confidence-bar" style="margin-top:6px">
                                <div class="confidence-fill ${confClass}">
                                    <span style="width:${confidence}%"></span>
                                </div>
-                               <span>${confidence.toFixed(0)}%</span>
+                               <span class="confidence-label">${confidence.toFixed(0)}% впевненість</span>
                            </div>`
                     }
                 </div>
                 <div class="term-action">
                     ${t.is_approved
                         ? `<span class="status-badge ${statusClass}">${statusLabel}</span>`
-                        : `<button class="approve-btn" onclick="GlossaryView.approve(${t.id})" title="Затвердити">✓</button>
-                           <button class="reject-btn" onclick="GlossaryView.reject(${t.id})" title="Відхилити">✗</button>
+                        : `<button class="approve-btn" onclick="GlossaryView.approve(${t.id})" data-tooltip="Затвердити">✓</button>
+                           <button class="reject-btn" onclick="GlossaryView.reject(${t.id})" data-tooltip="Відхилити">✗</button>
                            <button class="edit-btn" onclick="GlossaryView.startEdit(${t.id}, '${App.esc(t.target_term).replace(/'/g, "\\'")}')">✎</button>`
                     }
                 </div>

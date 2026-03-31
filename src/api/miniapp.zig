@@ -710,6 +710,81 @@ pub fn handleGetProject(req: *httpz.Request, res: *httpz.Response) !void {
     }, .{});
 }
 
+pub fn handleUpdateProject(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    // Only owner can update
+    const is_owner = try db_projects.isOwner(&a.db, access.project.id, user.id);
+    if (!is_owner) {
+        jsonError(res, 403, "Лише власник може редагувати проєкт.");
+        return;
+    }
+
+    const Body = struct {
+        name: ?[]const u8 = null,
+        description: ?[]const u8 = null,
+    };
+
+    const payload = (try req.json(Body)) orelse {
+        jsonError(res, 400, "Тіло запиту порожнє.");
+        return;
+    };
+
+    // Update name if provided
+    if (payload.name) |name_raw| {
+        const name = std.mem.trim(u8, name_raw, &std.ascii.whitespace);
+        if (name.len == 0 or name.len > 100) {
+            jsonError(res, 400, "Назва проєкту має містити від 1 до 100 символів.");
+            return;
+        }
+        var stmt = try a.db.prepare("UPDATE projects SET name = ?, updated_at = unixepoch('now') WHERE id = ?");
+        defer stmt.deinit();
+        try stmt.bindText(1, name);
+        try stmt.bindInt(2, access.project.id);
+        try stmt.exec();
+    }
+
+    // Update description if provided
+    if (payload.description) |desc_raw| {
+        const desc = std.mem.trim(u8, desc_raw, &std.ascii.whitespace);
+        var stmt = try a.db.prepare("UPDATE projects SET description = ?, updated_at = unixepoch('now') WHERE id = ?");
+        defer stmt.deinit();
+        try stmt.bindText(1, desc);
+        try stmt.bindInt(2, access.project.id);
+        try stmt.exec();
+    }
+
+    try res.json(.{ .ok = true }, .{});
+}
+
+pub fn handleDeleteProject(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    // Only owner can delete
+    const is_owner = try db_projects.isOwner(&a.db, access.project.id, user.id);
+    if (!is_owner) {
+        jsonError(res, 403, "Лише власник може видалити проєкт.");
+        return;
+    }
+
+    // Delete project (CASCADE will handle related records)
+    var stmt = try a.db.prepare("DELETE FROM projects WHERE id = ?");
+    defer stmt.deinit();
+    try stmt.bindInt(1, access.project.id);
+    try stmt.exec();
+
+    // Delete project directories
+    storage.deleteProjectDirs(a.config.data_dir, access.project.id) catch |err| {
+        std.log.warn("Failed to delete project directories: {}", .{err});
+    };
+
+    try res.json(.{ .ok = true }, .{});
+}
+
 pub fn handleListFiles(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const access = parseProjectAccess(req, res, user) orelse return;
@@ -855,6 +930,29 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
         price_cents,
     );
 
+    // Extract text content for quoting (source/reference files only)
+    if (std.mem.eql(u8, category, "source") or std.mem.eql(u8, category, "reference")) {
+        if (processor_client.extractText(a.allocator, &a.config, store_path, original_name)) |text_content| {
+            defer a.allocator.free(text_content);
+
+            // Store in document_content table
+            var content_stmt = try a.db.prepare(
+                "INSERT INTO document_content (file_id, content_text, extracted_at, extraction_method) VALUES (?, ?, ?, ?)",
+            );
+            defer content_stmt.deinit();
+            try content_stmt.bindInt(1, file_id);
+            try content_stmt.bindText(2, text_content);
+            try content_stmt.bindInt(3, std.time.timestamp());
+            try content_stmt.bindText(4, "python_processor");
+            try content_stmt.exec();
+
+            std.log.info("Extracted {d} chars from file_id={d} ({s})", .{ text_content.len, file_id, original_name });
+        } else |err| {
+            std.log.warn("Text extraction failed for file_id={d} ({s}): {any}", .{ file_id, original_name, err });
+            // Don't fail the upload, just skip text extraction
+        }
+    }
+
     res.status = 201;
     try res.json(.{
         .file = .{
@@ -905,6 +1003,52 @@ pub fn handleDeleteFile(req: *httpz.Request, res: *httpz.Response) !void {
     try delete_stmt.exec();
 
     try res.json(.{ .ok = true }, .{});
+}
+
+/// GET /api/projects/:project_id/files/:file_id/content — Get file content for quoting
+pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const file_id = parseIntParam(req, "file_id") catch {
+        jsonError(res, 400, "Некоректний ідентифікатор файлу.");
+        return;
+    };
+    const a = app();
+
+    // Check file belongs to project
+    var file_stmt = try a.db.prepare(
+        "SELECT id, original_name FROM files WHERE id = ? AND project_id = ? LIMIT 1",
+    );
+    defer file_stmt.deinit();
+    try file_stmt.bindInt(1, file_id);
+    try file_stmt.bindInt(2, access.project_id);
+
+    if (!(try file_stmt.step())) {
+        jsonError(res, 404, "Файл не знайдено.");
+        return;
+    }
+
+    const file_name = try dupOrEmpty(res.arena, file_stmt.columnText(1));
+
+    // Get content from document_content table
+    var content_stmt = try a.db.prepare(
+        "SELECT content_text FROM document_content WHERE file_id = ?",
+    );
+    defer content_stmt.deinit();
+    try content_stmt.bindInt(1, file_id);
+
+    if (try content_stmt.step()) {
+        const content = content_stmt.columnText(0) orelse "";
+        const content_owned = try a.allocator.dupe(u8, content);
+        defer a.allocator.free(content_owned);
+
+        try res.json(.{
+            .content = content_owned,
+            .file_name = file_name,
+        }, .{});
+    } else {
+        jsonError(res, 404, "Текст не витягнуто для цього файлу. Спробуйте завантажити файл знову.");
+    }
 }
 
 pub fn handleListTeam(req: *httpz.Request, res: *httpz.Response) !void {
@@ -1917,23 +2061,11 @@ pub fn handleSendMessage(req: *httpz.Request, res: *httpz.Response) !void {
     try msg_stmt.bindInt(7, now);
     try msg_stmt.exec();
 
-    // Insert SSE event
-    var sse_stmt = try a.db.prepare(
-        "INSERT INTO sse_events (project_id, event_type, payload, created_at) VALUES (?, 'message', ?, ?)",
-    );
-    defer sse_stmt.deinit();
-    try sse_stmt.bindInt(1, access.project_id);
-
-    const payload = try std.json.stringifyAlloc(res.arena, .{
-        .content = content,
-        .sender_name = user.first_name,
-        .direction = "to_admin",
-        .uuid = uuid,
-        .created_at = now,
-    }, .{});
-    try sse_stmt.bindText(2, payload);
-    try sse_stmt.bindInt(3, now);
-    try sse_stmt.exec();
+    // Broadcast to WebSocket clients
+    const websocket = @import("../realtime/websocket.zig");
+    websocket.broadcastMessage(a.allocator, a.redis, access.project_id, user.id, content) catch |err| {
+        std.log.warn("Failed to broadcast message via WebSocket: {any}", .{err});
+    };
 
     // Forward to admin via Telegram
     var fwd_buf: [4200]u8 = undefined;
@@ -1948,50 +2080,6 @@ pub fn handleSendMessage(req: *httpz.Request, res: *httpz.Response) !void {
     a.allocator.free(fwd_resp);
 
     try res.json(.{ .sent = true, .uuid = uuid }, .{});
-}
-
-// ─── SSE Message Stream ─────────────────────────────────────────────────────
-
-pub fn handleMessageStream(req: *httpz.Request, res: *httpz.Response) !void {
-    const user = authenticate(req, res) orelse return;
-    const access = parseProjectAccess(req, res, user) orelse return;
-    const a = app();
-
-    res.status = 200;
-    res.header("Content-Type", "text/event-stream");
-    res.header("Cache-Control", "no-cache");
-    res.header("Connection", "keep-alive");
-    res.header("X-Accel-Buffering", "no");
-
-    // Get last known event ID from client
-    const last_id_str = req.header("last-event-id") orelse "0";
-    var last_id = std.fmt.parseInt(i64, last_id_str, 10) catch 0;
-
-    // Build response body with recent events
-    var body_buf = std.ArrayList(u8).init(res.arena);
-    var writer = body_buf.writer();
-
-    // Send any queued events since last_id
-    var stmt = try a.db.prepare(
-        "SELECT id, event_type, payload FROM sse_events WHERE project_id = ? AND id > ? ORDER BY id ASC LIMIT 50",
-    );
-    defer stmt.deinit();
-    try stmt.bindInt(1, access.project_id);
-    try stmt.bindInt(2, last_id);
-
-    while (try stmt.step()) {
-        const eid = stmt.columnInt(0);
-        const payload = stmt.columnText(2) orelse "{}";
-        try std.fmt.format(writer, "id: {d}\ndata: {s}\n\n", .{ eid, payload });
-        last_id = eid;
-    }
-
-    // Send heartbeat if no events
-    if (body_buf.items.len == 0) {
-        try writer.writeAll(": heartbeat\n\n");
-    }
-
-    res.body = body_buf.items;
 }
 
 // ─── Workflow Status ────────────────────────────────────────────────────────

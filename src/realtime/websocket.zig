@@ -81,7 +81,7 @@ pub fn handleUpgrade(req: *httpz.Request, res: *httpz.Response) !void {
 
     // Upgrade to WebSocket
     const upgraded = try httpz.upgradeWebsocket(
-        WebSocketHandler,
+        Handler,
         req,
         res,
         WebSocketContext{ .project_id = project_id, .user_id = user.id },
@@ -99,6 +99,11 @@ pub fn handleUpgrade(req: *httpz.Request, res: *httpz.Response) !void {
 const WebSocketContext = struct {
     project_id: i64,
     user_id: i64,
+};
+
+// Handler wrapper required by httpz
+const Handler = struct {
+    pub const WebsocketHandler = WebSocketHandler;
 };
 
 const WebSocketHandler = struct {

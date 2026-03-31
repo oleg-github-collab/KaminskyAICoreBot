@@ -197,6 +197,7 @@ const App = {
         this.currentView = view;
         document.querySelectorAll('.nav-btn').forEach(b =>
             b.classList.toggle('active', b.dataset.view === view));
+        this.updateBreadcrumb();
         const c = document.getElementById('content');
         switch (view) {
             case 'projects': ProjectsView.render(c); break;
@@ -215,6 +216,40 @@ const App = {
     selectProject(project) {
         this.currentProject = project;
         this.navigate('files');
+        this.updateBreadcrumb();
+    },
+
+    updateBreadcrumb() {
+        const breadcrumb = document.getElementById('breadcrumb');
+        const projectInfo = document.getElementById('project-info');
+
+        if (!breadcrumb) return;
+
+        let crumbs = [];
+
+        // Always show "Проєкти" as root if we have a project selected
+        if (this.currentProject) {
+            crumbs.push('<a href="#" onclick="App.backToProjects(); return false;">Проєкти</a>');
+            crumbs.push(`<span>${this.esc(this.currentProject.name)}</span>`);
+
+            // Update project info badge
+            if (projectInfo) {
+                const role = this.currentProject.role || 'member';
+                const langs = this.currentProject.source_lang && this.currentProject.target_lang
+                    ? `${this.currentProject.source_lang} → ${this.currentProject.target_lang}`
+                    : '';
+
+                projectInfo.innerHTML = `
+                    <span class="project-badge">
+                        <span class="project-role">${this.esc(role)}</span>
+                        ${langs ? `<span class="project-langs">${this.esc(langs)}</span>` : ''}
+                    </span>`;
+            }
+        } else {
+            if (projectInfo) projectInfo.innerHTML = '';
+        }
+
+        breadcrumb.innerHTML = crumbs.join(' <span class="breadcrumb-sep">›</span> ');
     },
 
     backToProjects() {

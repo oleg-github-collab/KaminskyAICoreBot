@@ -209,6 +209,59 @@ async def voice_estimate(request: Request, authorization: str = Header(default="
     )
 
 
+# ─── Text Extraction ─────────────────────────────────────────────────────────
+
+@app.post("/extract-text")
+async def extract_text(
+    file: UploadFile = File(...),
+    authorization: str = Header(default=""),
+):
+    """Extract text content from PDF, DOCX, or TXT files for document quoting."""
+    verify_auth(authorization)
+    file_bytes = await file.read()
+    filename = file.filename or "unknown"
+
+    # Determine file type from extension
+    ext = filename.lower().split('.')[-1] if '.' in filename else ''
+
+    try:
+        if ext == 'pdf':
+            # Extract text from PDF
+            import PyPDF2
+            pdf_file = io.BytesIO(file_bytes)
+            reader = PyPDF2.PdfReader(pdf_file)
+            text_parts = []
+            for page in reader.pages:
+                text_parts.append(page.extract_text() or '')
+            text = '\n\n'.join(text_parts)
+
+        elif ext in ['docx', 'doc']:
+            # Extract text from DOCX
+            import docx
+            doc_file = io.BytesIO(file_bytes)
+            doc = docx.Document(doc_file)
+            text_parts = [para.text for para in doc.paragraphs]
+            text = '\n\n'.join(text_parts)
+
+        elif ext in ['txt', 'text']:
+            # Plain text
+            text = file_bytes.decode('utf-8', errors='ignore')
+
+        else:
+            # Unsupported format, try as text
+            text = file_bytes.decode('utf-8', errors='ignore')
+
+        # Limit to 100k chars for safety
+        if len(text) > 100000:
+            text = text[:100000] + "\n\n[... текст обрізано ...]"
+
+        return {"text": text, "length": len(text)}
+
+    except Exception as e:
+        logger.error(f"Text extraction failed for {filename}: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to extract text: {str(e)}")
+
+
 # ─── Error Handler ───────────────────────────────────────────────────────────
 
 @app.exception_handler(Exception)
