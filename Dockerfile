@@ -1,5 +1,5 @@
 # ==== Stage 1: Build ====
-# FORCE REBUILD: 2026-03-31-v2
+# FORCE REBUILD: 2026-03-31-12:20-enterprise-ui
 FROM ubuntu:22.04 AS builder
 
 ARG ZIG_VERSION=0.14.0
