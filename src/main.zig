@@ -258,9 +258,16 @@ fn serveHistoryJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.body = @embedFile("web/lib/history.js");
 }
 fn serveLogin(_: *httpz.Request, res: *httpz.Response) !void {
+    const a = handler.app();
+    const html_template = @embedFile("web/login.html");
+
+    // Replace {{BOT_USERNAME}} with actual bot username
+    const html = try std.mem.replaceOwned(u8, a.allocator, html_template, "{{BOT_USERNAME}}", a.config.bot_username);
+    defer a.allocator.free(html);
+
     res.status = 200;
     res.header("Content-Type", "text/html; charset=utf-8");
-    res.body = @embedFile("web/login.html");
+    res.body = html;
 }
 
 fn handleVerifySession(req: *httpz.Request, res: *httpz.Response) !void {

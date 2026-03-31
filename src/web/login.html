@@ -38,34 +38,10 @@
             font-size: 14px;
             margin-bottom: 32px;
         }
-        .telegram-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 12px;
-            background: #0088cc;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            padding: 14px 28px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-decoration: none;
-            box-shadow: 0 4px 12px rgba(0,136,204,0.3);
-        }
-        .telegram-btn:hover {
-            background: #0077b5;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(0,136,204,0.4);
-        }
-        .telegram-btn:active {
-            transform: translateY(0);
-        }
-        .telegram-icon {
-            width: 24px;
-            height: 24px;
-            fill: white;
+        .telegram-widget {
+            display: flex;
+            justify-content: center;
+            margin: 24px 0;
         }
         .features {
             margin-top: 40px;
@@ -110,12 +86,14 @@
         <h1>KI Beratung</h1>
         <p class="subtitle">Професійна система перекладацького менеджменту</p>
 
-        <a href="/auth/telegram" class="telegram-btn">
-            <svg class="telegram-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">
-                <path d="M229.3,34.3c-4.7-2.3-10.7-1.5-14.6,2.4L23.2,178.4c-4.7,4.7-5.5,12-2,17.5c3.5,5.5,10,8.1,16.3,6.5l77.5-19.4l-17.8,68.7c-1.6,6.3,1,12.8,6.5,16.3c5.5,3.5,12.8,2.7,17.5-2l151.7-191.5c3.9-3.9,4.7-9.9,2.4-14.6C272.7,50.3,234.3,37.6,229.3,34.3z"/>
-            </svg>
-            Увійти через Telegram
-        </a>
+        <!-- Telegram Login Widget -->
+        <div class="telegram-widget">
+            <script async src="https://telegram.org/js/telegram-widget.js?22"
+                    data-telegram-login="{{BOT_USERNAME}}"
+                    data-size="large"
+                    data-auth-url="https://bot-production-d5ec.up.railway.app/auth/telegram"
+                    data-request-access="write"></script>
+        </div>
 
         <div class="features">
             <div class="feature">
