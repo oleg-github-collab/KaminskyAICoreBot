@@ -104,6 +104,10 @@ const WebSocketContext = struct {
 // Handler wrapper required by httpz
 const Handler = struct {
     pub const WebsocketHandler = WebSocketHandler;
+
+    pub fn init(ws: *httpz.websocket.Conn, context: WebSocketContext) !WebSocketHandler {
+        return WebSocketHandler.init(ws, context);
+    }
 };
 
 const WebSocketHandler = struct {
