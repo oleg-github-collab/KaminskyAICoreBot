@@ -180,14 +180,56 @@ fn authenticateBearer(a: *handler.App, token: []const u8) !db_users.UserRecord {
 
 /// Public authentication function for WebSocket and other modules
 pub fn authenticateToken(allocator: std.mem.Allocator, db: *sqlite.Db, auth: []const u8) !db_users.UserRecord {
-    _ = allocator;
     _ = db;
     const a = app();
 
-    // WebSocket uses Bearer token
+    // Browser session: "Bearer <token>"
     if (std.mem.startsWith(u8, auth, "Bearer ")) {
         const token = auth[7..];
         return try authenticateBearer(a, token);
+    }
+
+    // Telegram Mini App: "tma <initData>"
+    if (std.mem.startsWith(u8, auth, "tma ")) {
+        const raw_init_data = std.mem.trim(u8, auth[4..], &std.ascii.whitespace);
+        if (raw_init_data.len == 0) return AuthError.Unauthorized;
+
+        const parsed = try parseInitData(allocator, raw_init_data);
+        const received_hash = parsed.hash orelse return AuthError.InvalidAuth;
+        try validateInitData(parsed.data_check_string, received_hash, a.config.bot_token);
+
+        if (parsed.auth_date) |auth_date| {
+            const now = std.time.timestamp();
+            if (auth_date > now + 300 or now - auth_date > 86400) {
+                return AuthError.ExpiredAuth;
+            }
+        }
+
+        const user_json = parsed.user_json orelse return AuthError.MissingUser;
+        const tg_user = try std.json.parseFromSliceLeaky(MiniAppUser, allocator, user_json, .{
+            .ignore_unknown_fields = true,
+        });
+
+        var user = try db_users.findOrCreate(
+            allocator,
+            &a.db,
+            tg_user.id,
+            if (tg_user.first_name.len == 0) "Telegram User" else tg_user.first_name,
+            tg_user.last_name,
+            tg_user.username,
+        );
+
+        if (user.telegram_id == a.config.admin_chat_id) {
+            db_users.setAdmin(&a.db, user.telegram_id) catch {};
+            user.is_admin = true;
+        }
+
+        return user;
+    }
+
+    // Dev mode fallback
+    if (!a.config.is_production) {
+        return devUser();
     }
 
     return AuthError.InvalidAuth;
@@ -2078,4 +2120,67 @@ pub fn handleCreateSession(req: *httpz.Request, res: *httpz.Response) !void {
         .token = token,
         .expires_at = expires,
     }, .{});
+}
+
+// ─── Instructions ────────────────────────────────────────────────────────────
+
+pub fn handleGetInstructions(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    var stmt = try a.db.prepare(
+        "SELECT instructions_json FROM project_instructions WHERE project_id = ?",
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, access.project_id);
+
+    if (try stmt.step()) {
+        const json_text = try dupOrEmpty(res.arena, stmt.columnText(0));
+        // Return raw JSON array directly
+        res.content_type = .JSON;
+        res.body = json_text;
+    } else {
+        res.content_type = .JSON;
+        res.body = "[]";
+    }
+}
+
+pub fn handleUpdateInstructions(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    const body = req.body() orelse {
+        jsonError(res, 400, "Пустий запит.");
+        return;
+    };
+
+    const parsed = std.json.parseFromSlice(struct {
+        instructions: ?std.json.Value = null,
+    }, res.arena, body, .{ .ignore_unknown_fields = true }) catch {
+        jsonError(res, 400, "Невірний формат JSON.");
+        return;
+    };
+    defer parsed.deinit();
+
+    // Re-serialize the instructions value as a string
+    const instructions_json = if (parsed.value.instructions) |instr|
+        std.json.stringifyAlloc(res.arena, instr, .{}) catch "[]"
+    else
+        "[]";
+
+    const now = std.time.timestamp();
+
+    var stmt = try a.db.prepare(
+        "INSERT INTO project_instructions (project_id, instructions_json, updated_at, updated_by) VALUES (?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET instructions_json=excluded.instructions_json, updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, access.project_id);
+    try stmt.bindText(2, instructions_json);
+    try stmt.bindInt(3, now);
+    try stmt.bindInt(4, user.id);
+    try stmt.exec();
+
+    try res.json(.{ .ok = true }, .{});
 }

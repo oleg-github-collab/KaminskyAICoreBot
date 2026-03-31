@@ -5,15 +5,14 @@ const migrations = [_]struct { version: i32, sql: []const u8 }{
     .{ .version = 1, .sql = @embedFile("../sql/001_initial.sql") },
     .{ .version = 2, .sql = @embedFile("../sql/002_indexes.sql") },
     .{ .version = 3, .sql = @embedFile("../sql/003_workflow.sql") },
-    // Migrations 4-10 temporarily disabled due to Docker cache issues
-    // Will be re-enabled after successful build
-    // .{ .version = 4, .sql = @embedFile("../sql/004_rich_text.sql") },
-    // .{ .version = 5, .sql = @embedFile("../sql/005_audit_log.sql") },
-    // .{ .version = 6, .sql = @embedFile("../sql/006_fts5_search.sql") },
-    // .{ .version = 7, .sql = @embedFile("../sql/007_comments.sql") },
-    // .{ .version = 8, .sql = @embedFile("../sql/008_git_like_versioning.sql") },
-    // .{ .version = 9, .sql = @embedFile("../sql/009_project_updates.sql") },
-    // .{ .version = 10, .sql = @embedFile("../sql/010_web_sessions.sql") },
+    .{ .version = 4, .sql = @embedFile("../sql/004_rich_text.sql") },
+    .{ .version = 5, .sql = @embedFile("../sql/005_audit_log.sql") },
+    .{ .version = 6, .sql = @embedFile("../sql/006_fts5_search.sql") },
+    .{ .version = 7, .sql = @embedFile("../sql/007_comments.sql") },
+    .{ .version = 8, .sql = @embedFile("../sql/008_git_like_versioning.sql") },
+    .{ .version = 9, .sql = @embedFile("../sql/009_project_updates.sql") },
+    .{ .version = 10, .sql = @embedFile("../sql/010_web_sessions.sql") },
+    .{ .version = 11, .sql = @embedFile("../sql/011_document_content.sql") },
 };
 
 pub fn run(db: *sqlite.Db) !void {
@@ -42,6 +41,21 @@ pub fn run(db: *sqlite.Db) !void {
         while (iter.next()) |stmt_raw| {
             const stmt_trimmed = std.mem.trim(u8, stmt_raw, &std.ascii.whitespace);
             if (stmt_trimmed.len == 0) continue;
+
+            // Skip comments-only lines
+            if (std.mem.startsWith(u8, stmt_trimmed, "--")) {
+                // Check if there's actual SQL after comments
+                var has_sql = false;
+                var line_iter = std.mem.splitScalar(u8, stmt_trimmed, '\n');
+                while (line_iter.next()) |line| {
+                    const trimmed_line = std.mem.trim(u8, line, &std.ascii.whitespace);
+                    if (trimmed_line.len > 0 and !std.mem.startsWith(u8, trimmed_line, "--")) {
+                        has_sql = true;
+                        break;
+                    }
+                }
+                if (!has_sql) continue;
+            }
 
             // Build null-terminated string
             var buf: [8192]u8 = undefined;

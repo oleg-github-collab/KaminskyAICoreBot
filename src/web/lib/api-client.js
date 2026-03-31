@@ -186,6 +186,21 @@ const API = {
         return this.req('DELETE', '/projects/' + pid + '/comments/' + commentId);
     },
 
+    // Instructions
+    getInstructionTemplates() {
+        // Default templates are client-side, no API needed
+        return Promise.resolve(null);
+    },
+    getProjectInstructions(pid) {
+        return this.req('GET', '/projects/' + pid + '/instructions');
+    },
+    updateProjectInstructions(pid, instructions) {
+        return this.req('POST', '/projects/' + pid + '/instructions', { instructions });
+    },
+    generateGlossaryFromPrompt(pid, prompt) {
+        return this.req('POST', '/projects/' + pid + '/glossary/generate', { prompt });
+    },
+
     // Git versioning
     getBranches(pid) { return this.req('GET', '/projects/' + pid + '/branches'); },
     createBranch(pid, name) { return this.req('POST', '/projects/' + pid + '/branches', { name }); },

@@ -184,6 +184,8 @@ pub fn main() !void {
     router.get("/api/projects/:project_id/settings", miniapp_api.handleGetSettings, .{});
     router.post("/api/projects/:project_id/settings", miniapp_api.handleUpdateSettings, .{});
     router.get("/api/projects/:project_id/workflow", miniapp_api.handleWorkflowStatus, .{});
+    router.get("/api/projects/:project_id/instructions", miniapp_api.handleGetInstructions, .{});
+    router.post("/api/projects/:project_id/instructions", miniapp_api.handleUpdateInstructions, .{});
     router.post("/api/auth/session", miniapp_api.handleCreateSession, .{});
 
     std.log.info("Server starting on 0.0.0.0:{d}...", .{config.port});
