@@ -24,7 +24,7 @@ pub const App = struct {
 /// Global application context, set by main.zig before server starts
 pub var app_global: App = undefined;
 
-fn app() *App {
+pub fn app() *App {
     return &app_global;
 }
 
