@@ -263,30 +263,10 @@ fn serveHistoryJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.header("Content-Type", "application/javascript; charset=utf-8");
     res.body = @embedFile("web/lib/history.js");
 }
-fn serveLogin(req: *httpz.Request, res: *httpz.Response) !void {
-    const a = handler.app();
-    const html_template = @embedFile("web/login.html");
-
-    // Replace {{BOT_USERNAME}} with actual bot username
-    const placeholder = "{{BOT_USERNAME}}";
-    const replacement = a.config.bot_username;
-
-    // Find and replace - use httpz arena allocator so it persists until response is sent
-    if (std.mem.indexOf(u8, html_template, placeholder)) |pos| {
-        const before = html_template[0..pos];
-        const after = html_template[pos + placeholder.len ..];
-        const html = try std.fmt.allocPrint(req.arena, "{s}{s}{s}", .{ before, replacement, after });
-        // No defer - httpz will free the arena after sending response
-
-        res.status = 200;
-        res.header("Content-Type", "text/html; charset=utf-8");
-        res.body = html;
-    } else {
-        // No placeholder found, serve as-is
-        res.status = 200;
-        res.header("Content-Type", "text/html; charset=utf-8");
-        res.body = html_template;
-    }
+fn serveLogin(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "text/html; charset=utf-8");
+    res.body = @embedFile("web/login.html");
 }
 
 fn handleVerifySession(req: *httpz.Request, res: *httpz.Response) !void {
