@@ -87,7 +87,7 @@ fn authenticateImpl(req: *httpz.Request) !db_users.UserRecord {
     const a = app();
     const auth_header = req.header("authorization");
 
-    if (auth_header == null) {
+    if (auth_header == null or auth_header.?.len == 0) {
         if (!a.config.is_production) {
             return devUser();
         }
