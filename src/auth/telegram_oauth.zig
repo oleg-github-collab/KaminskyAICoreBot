@@ -10,21 +10,22 @@ pub fn handleTelegramAuth(req: *httpz.Request, res: *httpz.Response) !void {
     const a = handler.app();
 
     // Extract Telegram auth data from query params
-    const id_str = req.query().get("id") orelse {
+    const query = try req.query();
+    const id_str = query.get("id") orelse {
         res.status = 400;
         res.body = "Missing id parameter";
         return;
     };
-    const first_name = req.query().get("first_name") orelse "";
-    const last_name = req.query().get("last_name");
-    const username = req.query().get("username");
-    _ = req.query().get("photo_url"); // Optional, not used yet
-    const auth_date_str = req.query().get("auth_date") orelse {
+    const first_name = query.get("first_name") orelse "";
+    const last_name = query.get("last_name");
+    const username = query.get("username");
+    _ = query.get("photo_url"); // Optional, not used yet
+    const auth_date_str = query.get("auth_date") orelse {
         res.status = 400;
         res.body = "Missing auth_date";
         return;
     };
-    _ = req.query().get("hash") orelse {
+    _ = query.get("hash") orelse {
         res.status = 400;
         res.body = "Missing hash";
         return;
@@ -93,13 +94,14 @@ fn verifyTelegramHash(allocator: std.mem.Allocator, bot_token: []const u8, req: 
     // Telegram uses HMAC-SHA256 to sign auth data
     // https://core.telegram.org/widgets/login#checking-authorization
 
-    const hash_param = req.query().get("hash") orelse return false;
+    const query = try req.query();
+    const hash_param = query.get("hash") orelse return false;
 
     // Build data_check_string from all params except hash
     var data_parts = std.ArrayList([]const u8).init(allocator);
     defer data_parts.deinit();
 
-    var iter = req.query().iterator();
+    var iter = query.iterator();
     while (iter.next()) |entry| {
         if (std.mem.eql(u8, entry.key, "hash")) continue;
 

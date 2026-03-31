@@ -51,7 +51,8 @@ pub fn handleUpgrade(req: *httpz.Request, res: *httpz.Response) !void {
     };
 
     // Authenticate user from query param or header
-    const auth_query = req.query().get("auth");
+    const query = try req.query();
+    const auth_query = query.get("auth");
     const auth_header = req.header("Authorization");
     const auth = auth_query orelse auth_header orelse {
         res.status = 401;
