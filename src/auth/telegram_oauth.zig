@@ -18,13 +18,13 @@ pub fn handleTelegramAuth(req: *httpz.Request, res: *httpz.Response) !void {
     const first_name = req.query().get("first_name") orelse "";
     const last_name = req.query().get("last_name");
     const username = req.query().get("username");
-    const photo_url = req.query().get("photo_url");
+    _ = req.query().get("photo_url"); // Optional, not used yet
     const auth_date_str = req.query().get("auth_date") orelse {
         res.status = 400;
         res.body = "Missing auth_date";
         return;
     };
-    const hash = req.query().get("hash") orelse {
+    _ = req.query().get("hash") orelse {
         res.status = 400;
         res.body = "Missing hash";
         return;
@@ -93,7 +93,6 @@ fn verifyTelegramHash(allocator: std.mem.Allocator, bot_token: []const u8, req: 
     // Telegram uses HMAC-SHA256 to sign auth data
     // https://core.telegram.org/widgets/login#checking-authorization
 
-    const query = req.url();
     const hash_param = req.query().get("hash") orelse return false;
 
     // Build data_check_string from all params except hash
@@ -172,7 +171,7 @@ fn createWebSession(a: *handler.App, user_id: i64, req: *httpz.Request) ![]const
     return token_owned;
 }
 
-pub fn verifyWebSession(allocator: std.mem.Allocator, db: *@import("../db/sqlite.zig").Db, token: []const u8) !?i64 {
+pub fn verifyWebSession(_: std.mem.Allocator, db: *@import("../db/sqlite.zig").Db, token: []const u8) !?i64 {
     var stmt = try db.prepare(
         \\SELECT user_id, expires_at FROM web_sessions
         \\WHERE session_token = ? AND expires_at > unixepoch('now')

@@ -2,7 +2,7 @@ const std = @import("std");
 const httpz = @import("httpz");
 const handler = @import("../webhook/handler.zig");
 const db_users = @import("../db/users.zig");
-const db_projects = @import("../db/projects.zig");
+const db_projects = @import("../db/projects_db.zig");
 const miniapp_api = @import("../api/miniapp.zig");
 
 pub const EventType = enum {
@@ -70,13 +70,9 @@ pub fn handleUpgrade(req: *httpz.Request, res: *httpz.Response) !void {
     defer if (user.username) |un| a.allocator.free(un);
 
     // Check user has access to project
-    const access = db_projects.getUserAccess(&a.db, project_id, user.id) catch {
-        res.status = 403;
-        res.body = "{\"error\":\"Access denied\"}";
-        return;
-    };
+    const is_member = db_projects.isMember(&a.db, project_id, user.id) catch false;
 
-    if (access == null) {
+    if (!is_member) {
         res.status = 403;
         res.body = "{\"error\":\"Not a project member\"}";
         return;
@@ -170,7 +166,6 @@ const WebSocketHandler = struct {
             self.context.user_id,
             self.context.project_id,
         });
-        _ = self;
     }
 
     fn broadcastTyping(self: *WebSocketHandler) !void {
@@ -225,10 +220,13 @@ pub fn broadcastEvent(allocator: std.mem.Allocator, redis: ?*@import("../redis/c
 
 /// Helper to broadcast a simple message event
 pub fn broadcastMessage(allocator: std.mem.Allocator, redis: ?*@import("../redis/client.zig").RedisClient, project_id: i64, user_id: i64, content: []const u8) !void {
+    const data_str = try std.fmt.allocPrint(allocator, "{{\"content\":\"{s}\"}}", .{content});
+    defer allocator.free(data_str);
+
     const data_obj = try std.json.parseFromSlice(
         std.json.Value,
         allocator,
-        "{\"content\":\"\"}",
+        data_str,
         .{},
     );
     defer data_obj.deinit();
