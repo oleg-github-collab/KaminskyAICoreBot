@@ -262,12 +262,25 @@ fn serveLogin(_: *httpz.Request, res: *httpz.Response) !void {
     const html_template = @embedFile("web/login.html");
 
     // Replace {{BOT_USERNAME}} with actual bot username
-    const html = try std.mem.replaceOwned(u8, a.allocator, html_template, "{{BOT_USERNAME}}", a.config.bot_username);
-    defer a.allocator.free(html);
+    const placeholder = "{{BOT_USERNAME}}";
+    const replacement = a.config.bot_username;
 
-    res.status = 200;
-    res.header("Content-Type", "text/html; charset=utf-8");
-    res.body = html;
+    // Find and replace
+    if (std.mem.indexOf(u8, html_template, placeholder)) |pos| {
+        const before = html_template[0..pos];
+        const after = html_template[pos + placeholder.len ..];
+        const html = try std.fmt.allocPrint(a.allocator, "{s}{s}{s}", .{ before, replacement, after });
+        defer a.allocator.free(html);
+
+        res.status = 200;
+        res.header("Content-Type", "text/html; charset=utf-8");
+        res.body = html;
+    } else {
+        // No placeholder found, serve as-is
+        res.status = 200;
+        res.header("Content-Type", "text/html; charset=utf-8");
+        res.body = html_template;
+    }
 }
 
 fn handleVerifySession(req: *httpz.Request, res: *httpz.Response) !void {
