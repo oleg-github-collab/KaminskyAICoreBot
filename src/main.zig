@@ -140,6 +140,7 @@ pub fn main() !void {
     router.get("/app/lib/dragdrop.js", serveDragDropJS, .{});
     router.get("/app/lib/diff-viewer.js", serveDiffViewerJS, .{});
     router.get("/app/lib/file-stats.js", serveFileStatsJS, .{});
+    router.get("/app/lib/onboarding.js", serveOnboardingJS, .{});
     router.get("/app/components/inbox.js", serveInboxJS, .{});
     router.get("/app/components/instructions.js", serveInstructionsJS, .{});
 
@@ -331,6 +332,11 @@ fn serveFileStatsJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
     res.body = @embedFile("web/lib/file-stats.js");
+}
+fn serveOnboardingJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/lib/onboarding.js");
 }
 fn serveInboxJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
