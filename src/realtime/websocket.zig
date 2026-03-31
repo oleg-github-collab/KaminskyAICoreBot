@@ -80,24 +80,16 @@ pub fn handleUpgrade(req: *httpz.Request, res: *httpz.Response) !void {
     }
 
     // Upgrade to WebSocket
-    if (!httpz.upgradeWebsocket(
+    const upgraded = try httpz.upgradeWebsocket(
         WebSocketHandler,
         req,
         res,
         WebSocketContext{ .project_id = project_id, .user_id = user.id },
-    )) |ws| {
+    );
+
+    if (upgraded) {
         // Successfully upgraded
         std.log.info("WebSocket connected: user={d}, project={d}", .{ user.id, project_id });
-
-        // Send welcome message
-        const welcome = std.fmt.allocPrint(
-            a.allocator,
-            "{{\"type\":\"connected\",\"project_id\":{d},\"user_id\":{d}}}",
-            .{ project_id, user.id },
-        ) catch return;
-        defer a.allocator.free(welcome);
-
-        ws.write(welcome) catch {};
     } else {
         res.status = 400;
         res.body = "{\"error\":\"WebSocket upgrade failed\"}";
@@ -113,7 +105,7 @@ const WebSocketHandler = struct {
     context: WebSocketContext,
     ws: *httpz.websocket.Conn,
 
-    pub fn init(ws: *httpz.websocket.Conn, context: WebSocketContext) WebSocketHandler {
+    pub fn init(ws: *httpz.websocket.Conn, context: WebSocketContext) !WebSocketHandler {
         return .{
             .context = context,
             .ws = ws,
