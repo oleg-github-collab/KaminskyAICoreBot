@@ -1543,6 +1543,73 @@ pub fn handleDeleteProject(req: *httpz.Request, res: *httpz.Response) !void {
 
 // ─── Glossary Versions ──────────────────────────────────────────────────────
 
+
+pub fn handleUpdateProject(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const a = app();
+    const project_id = parseIntParam(req, "project_id") catch {
+        jsonError(res, 400, "Невірний ID проєкту.");
+        return;
+    };
+
+    // Check if user is owner
+    const is_owner = try db_projects.isOwner(&a.db, project_id, user.id);
+    if (!is_owner) {
+        jsonError(res, 403, "Лише власник може редагувати проєкт.");
+        return;
+    }
+
+    const Body = struct {
+        name: ?[]const u8 = null,
+        description: ?[]const u8 = null,
+        source_lang: ?[]const u8 = null,
+        target_lang: ?[]const u8 = null,
+    };
+
+    const payload = (try req.json(Body)) orelse {
+        jsonError(res, 400, "Невірний формат даних.");
+        return;
+    };
+
+    // Update fields
+    if (payload.name) |name| {
+        if (name.len == 0 or name.len > 200) {
+            jsonError(res, 400, "Назва проєкту має бути від 1 до 200 символів.");
+            return;
+        }
+        var stmt = try a.db.prepare("UPDATE projects SET name = ? WHERE id = ?");
+        defer stmt.deinit();
+        try stmt.bindText(1, name);
+        try stmt.bindInt(2, project_id);
+        try stmt.exec();
+    }
+
+    if (payload.description) |desc| {
+        var stmt = try a.db.prepare("UPDATE projects SET description = ? WHERE id = ?");
+        defer stmt.deinit();
+        try stmt.bindText(1, desc);
+        try stmt.bindInt(2, project_id);
+        try stmt.exec();
+    }
+
+    if (payload.source_lang) |lang| {
+        var stmt = try a.db.prepare("UPDATE projects SET source_lang = ? WHERE id = ?");
+        defer stmt.deinit();
+        try stmt.bindText(1, lang);
+        try stmt.bindInt(2, project_id);
+        try stmt.exec();
+    }
+
+    if (payload.target_lang) |lang| {
+        var stmt = try a.db.prepare("UPDATE projects SET target_lang = ? WHERE id = ?");
+        defer stmt.deinit();
+        try stmt.bindText(1, lang);
+        try stmt.bindInt(2, project_id);
+        try stmt.exec();
+    }
+
+    try res.json(.{ .ok = true }, .{});
+}
 pub fn handleListGlossaryVersions(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const access = parseProjectAccess(req, res, user) orelse return;
