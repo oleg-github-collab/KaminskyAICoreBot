@@ -1986,14 +1986,21 @@ pub fn handleCreateSession(req: *httpz.Request, res: *httpz.Response) !void {
     const now = std.time.timestamp();
     const expires = now + 30 * 24 * 60 * 60; // 30 days
 
+    // Get IP and User-Agent for logging
+    const ip = req.header("X-Forwarded-For") orelse req.header("X-Real-IP") orelse "unknown";
+    const ua = req.header("User-Agent") orelse "unknown";
+
     var stmt = try a.db.prepare(
-        "INSERT INTO web_sessions (user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO web_sessions (user_id, session_token, ip_address, user_agent, created_at, expires_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     );
     defer stmt.deinit();
     try stmt.bindInt(1, user.id);
-    try stmt.bindText(2, hash_hex);
-    try stmt.bindInt(3, expires);
-    try stmt.bindInt(4, now);
+    try stmt.bindText(2, token);
+    try stmt.bindText(3, ip);
+    try stmt.bindText(4, ua);
+    try stmt.bindInt(5, now);
+    try stmt.bindInt(6, expires);
+    try stmt.bindInt(7, now);
     try stmt.exec();
 
     try res.json(.{
