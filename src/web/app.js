@@ -125,7 +125,7 @@ const App = {
             // Alt + 1-8 → Navigate between views
             if (e.altKey && e.key >= '1' && e.key <= '8') {
                 e.preventDefault();
-                const views = ['projects', 'files', 'pricing', 'glossary', 'versions', 'settings', 'team', 'messages'];
+                const views = ['projects', 'files', 'glossary', 'messages', 'instructions', 'pricing', 'versions', 'team', 'settings'];
                 const index = parseInt(e.key) - 1;
                 if (views[index]) {
                     this.navigate(views[index]);
@@ -176,14 +176,13 @@ const App = {
         const views = [
             { id: 'projects', label: 'Проєкти', icon: '📁' },
             { id: 'files', label: 'Файли', icon: '📄' },
-            { id: 'inbox', label: 'Вхідні', icon: '📥' },
+            { id: 'glossary', label: 'Глосарій', icon: '📋' },
+            { id: 'messages', label: 'Чат', icon: '💬' },
             { id: 'instructions', label: 'Інструкції', icon: '📝' },
             { id: 'pricing', label: 'Вартість', icon: '💰' },
-            { id: 'glossary', label: 'Глосарій', icon: '📋' },
             { id: 'versions', label: 'Версії', icon: '📊' },
-            { id: 'settings', label: 'Налаштування', icon: '⚙️' },
             { id: 'team', label: 'Команда', icon: '👥' },
-            { id: 'messages', label: 'Чат', icon: '💬' },
+            { id: 'settings', label: 'Налаштування', icon: '⚙️' },
         ];
         nav.innerHTML = views.map(v =>
             `<button class="nav-btn${v.id === this.currentView ? ' active' : ''}" data-view="${v.id}">${v.icon} ${v.label}</button>`
@@ -202,7 +201,6 @@ const App = {
         switch (view) {
             case 'projects': ProjectsView.render(c); break;
             case 'files': FilesView.render(c, this.currentProject); break;
-            case 'inbox': InboxView.render(c, this.currentProject); break;
             case 'instructions': InstructionsView.render(c, this.currentProject); break;
             case 'glossary': GlossaryView.render(c, this.currentProject); break;
             case 'versions': GlossaryVersionsView.render(c, this.currentProject); break;
@@ -215,6 +213,14 @@ const App = {
 
     selectProject(project) {
         this.currentProject = project;
+
+        // Map API role to RBAC role and update permissions
+        if (typeof RoleManager !== 'undefined') {
+            const roleMap = { 'owner': 'owner', 'admin': 'admin', 'member': 'client' };
+            const rbacRole = roleMap[project.role] || 'client';
+            RoleManager.setUser(null, rbacRole);
+        }
+
         this.navigate('files');
         this.updateBreadcrumb();
     },

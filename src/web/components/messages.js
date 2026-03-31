@@ -1,8 +1,10 @@
 const MessagesView = {
-    eventSource: null,
+    ws: null,
     currentPid: null,
     seenUuids: new Set(),
     quill: null,
+    reconnectTimer: null,
+    reconnectAttempts: 0,
 
     async render(c, project) {
         this.disconnect();
@@ -15,7 +17,7 @@ const MessagesView = {
             <div class="chat-container">
                 <div class="chat-header">
                     <h2 style="font-size:16px;margin:0">${App.esc(project.name)} — Чат</h2>
-                    <div id="connection-status" style="font-size:11px;color:var(--hint);margin-top:2px"></div>
+                    <div id="connection-status" style="font-size:11px;color:var(--hint);margin-top:2px">🟡 Підключення...</div>
                 </div>
                 <div id="messages-list" class="chat-messages"><div class="loading">Завантаження...</div></div>
                 <div id="typing-indicator" style="display:none">
@@ -56,7 +58,6 @@ const MessagesView = {
             }
         });
 
-        // Handle Enter key to send (Shift+Enter for new line)
         this.quill.root.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -88,7 +89,6 @@ const MessagesView = {
         const name = m.sender_name || '';
         const readMark = m.is_read ? ' ✓✓' : ' ✓';
 
-        // Render HTML content if format is html, otherwise escape plain text
         let contentHtml = '';
         if (m.content_format === 'html') {
             contentHtml = m.content || '[медіа]';
@@ -104,29 +104,46 @@ const MessagesView = {
             </div>`;
     },
 
-    connectWebSocket(pid) {
-        this.disconnect();
-        const status = document.getElementById('connection-status');
-        if (status) status.textContent = '🟡 Підключення...';
+    setStatus(text) {
+        const el = document.getElementById('connection-status');
+        if (el) el.textContent = text;
+    },
 
+    connectWebSocket(pid) {
+        this.disconnectWs();
+        this.reconnectAttempts = 0;
+        this.setStatus('🟡 Підключення...');
+        this._connect(pid);
+    },
+
+    _connect(pid) {
         try {
-            this.eventSource = API.connectMessageStream(pid,
-                (data) => this.handleWebSocketMessage(data),
-                () => this.handleWebSocketError()
-            );
-            setTimeout(() => {
-                if (status && this.eventSource && this.eventSource.readyState === 1) {
-                    status.textContent = '🟢 Підключено';
-                    setTimeout(() => { if (status) status.textContent = ''; }, 2000);
+            this.ws = API.connectMessageStream(pid, {
+                onOpen: () => {
+                    this.reconnectAttempts = 0;
+                    this.setStatus('🟢 Підключено');
+                    setTimeout(() => this.setStatus(''), 3000);
+                },
+                onMessage: (data) => this.handleMessage(data),
+                onClose: (event) => {
+                    this.ws = null;
+                    // Don't reconnect if we intentionally disconnected
+                    if (!this.currentPid || this.currentPid !== pid) return;
+                    this.reconnectAttempts++;
+                    const delay = Math.min(3000 * this.reconnectAttempts, 30000);
+                    this.setStatus('🔴 Відключено. Перепідключення...');
+                    this.reconnectTimer = setTimeout(() => this._connect(pid), delay);
                 }
-            }, 500);
+            });
         } catch (e) {
-            console.error('WebSocket connection failed:', e);
-            if (status) status.textContent = '🔴 Помилка підключення';
+            console.error('WS connection failed:', e);
+            this.setStatus('🔴 Помилка підключення');
+            // Retry after delay
+            this.reconnectTimer = setTimeout(() => this._connect(pid), 5000);
         }
     },
 
-    handleWebSocketMessage(data) {
+    handleMessage(data) {
         if (data.type === 'message' && data.message) {
             const m = data.message;
             if (m.message_uuid && this.seenUuids.has(m.message_uuid)) return;
@@ -143,17 +160,14 @@ const MessagesView = {
             list.appendChild(div.firstElementChild);
             list.scrollTop = list.scrollHeight;
 
-            // Hide typing indicator if message arrived
             this.hideTyping();
 
-            // Play subtle notification if from admin
-            if (m.direction === 'from_admin' && typeof App.tg !== 'undefined' && App.tg.HapticFeedback) {
+            if (m.direction === 'from_admin' && App.tg && App.tg.HapticFeedback) {
                 App.tg.HapticFeedback.notificationOccurred('success');
             }
         } else if (data.type === 'typing') {
             this.showTyping();
         } else if (data.type === 'read_receipt') {
-            // Update read markers
             const list = document.getElementById('messages-list');
             if (!list || !data.message_uuid) return;
             const bubble = list.querySelector(`[data-uuid="${data.message_uuid}"]`);
@@ -164,15 +178,6 @@ const MessagesView = {
                 }
             }
         }
-    },
-
-    handleWebSocketError() {
-        const status = document.getElementById('connection-status');
-        if (status) status.textContent = '🔴 Підключення втрачено';
-        // Attempt reconnect after 3s
-        setTimeout(() => {
-            if (this.currentPid) this.connectWebSocket(this.currentPid);
-        }, 3000);
     },
 
     showTyping() {
@@ -190,11 +195,18 @@ const MessagesView = {
         clearTimeout(this.typingTimeout);
     },
 
-    disconnect() {
-        if (this.eventSource) {
-            this.eventSource.close();
-            this.eventSource = null;
+    disconnectWs() {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+        if (this.ws) {
+            this.ws.onclose = null; // prevent reconnect on intentional close
+            this.ws.close();
+            this.ws = null;
         }
+    },
+
+    disconnect() {
+        this.disconnectWs();
         this.hideTyping();
         this.seenUuids.clear();
         this.currentPid = null;
@@ -220,7 +232,6 @@ const MessagesView = {
         if (btnText) btnText.style.display = 'none';
         if (btnSpinner) btnSpinner.style.display = 'inline-block';
 
-        // Clear editor and disable
         const oldHtml = html;
         this.quill.setText('');
         this.quill.enable(false);
@@ -247,7 +258,6 @@ const MessagesView = {
                 list.scrollTop = list.scrollHeight;
             }
 
-            // Haptic feedback if Telegram Mini App
             if (App.tg && App.tg.HapticFeedback) {
                 App.tg.HapticFeedback.notificationOccurred('success');
             }
@@ -255,7 +265,6 @@ const MessagesView = {
             App.toast(e.message, 'error');
             this.quill.root.innerHTML = oldHtml;
         } finally {
-            // Reset button state
             if (btn) btn.disabled = false;
             if (btnText) btnText.style.display = 'inline';
             if (btnSpinner) btnSpinner.style.display = 'none';

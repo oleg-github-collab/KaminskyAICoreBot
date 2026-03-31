@@ -109,17 +109,27 @@ const InstructionsView = {
             this.libraryTemplates = library || this.getDefaultTemplates();
 
             // Load active instructions for project
-            const active = await API.getProjectInstructions(projectId);
-            this.activeInstructions = active || [];
+            let active = [];
+            try {
+                active = await API.getProjectInstructions(projectId);
+            } catch (e) {
+                console.warn('Instructions API error, using defaults:', e.message);
+            }
+
+            // Auto-populate with key defaults for new projects
+            if (!active || active.length === 0) {
+                const defaults = this.getDefaultTemplates();
+                active = defaults.slice(0, 4); // First 4 defaults
+            }
+            this.activeInstructions = active;
 
             this.renderLibrary();
             this.renderActive();
             this.updatePromptPreview();
         } catch (err) {
             console.error('Failed to load instructions:', err);
-            // Fallback to defaults
             this.libraryTemplates = this.getDefaultTemplates();
-            this.activeInstructions = [];
+            this.activeInstructions = this.getDefaultTemplates().slice(0, 4);
             this.renderLibrary();
             this.renderActive();
         }
@@ -466,13 +476,44 @@ const InstructionsView = {
     },
 
     addInstruction() {
-        // TODO: Implement custom instruction creation
-        App.toast('Функція створення власної інструкції в розробці', 'info');
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal">
+                <h3>➕ Нова інструкція</h3>
+                <form id="new-instruction-form">
+                    <div class="form-group">
+                        <label>Назва:</label>
+                        <input type="text" id="new-title" class="form-input" placeholder="Назва інструкції" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Зміст:</label>
+                        <textarea id="new-content" class="form-textarea" rows="4" placeholder="Опишіть інструкцію..." required></textarea>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Скасувати</button>
+                        <button type="submit" class="btn btn-primary">Додати</button>
+                    </div>
+                </form>
+            </div>`;
+        document.body.appendChild(overlay);
+        overlay.querySelector('form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const title = document.getElementById('new-title').value.trim();
+            const content = document.getElementById('new-content').value.trim();
+            if (!title || !content) return;
+            this.activeInstructions.push({ id: 'custom_' + Date.now(), title, content, icon: '📝', category: 'custom' });
+            this.renderActive();
+            this.updatePromptPreview();
+            await this.saveInstructions();
+            overlay.remove();
+            App.toast('Інструкцію додано', 'success');
+        });
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     },
 
     createTemplate() {
-        // TODO: Implement template creation
-        App.toast('Функція створення шаблону в розробці', 'info');
+        this.addInstruction();
     }
 };
 
