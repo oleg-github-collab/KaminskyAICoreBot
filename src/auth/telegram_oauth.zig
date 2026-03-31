@@ -138,6 +138,20 @@ fn verifyTelegramHash(allocator: std.mem.Allocator, bot_token: []const u8, req: 
 }
 
 fn createWebSession(a: *handler.App, user_id: i64, req: *httpz.Request) ![]const u8 {
+    // Ensure web_sessions table exists
+    a.db.exec(
+        \\CREATE TABLE IF NOT EXISTS web_sessions (
+        \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\    user_id INTEGER NOT NULL REFERENCES users(id),
+        \\    session_token TEXT NOT NULL UNIQUE,
+        \\    ip_address TEXT,
+        \\    user_agent TEXT,
+        \\    created_at INTEGER NOT NULL,
+        \\    expires_at INTEGER NOT NULL,
+        \\    last_used_at INTEGER NOT NULL
+        \\)
+    ) catch {};
+
     // Generate random session token
     var token_bytes: [32]u8 = undefined;
     std.crypto.random.bytes(&token_bytes);
