@@ -54,9 +54,12 @@ CREATE TABLE IF NOT EXISTS translation_settings (
 CREATE TABLE IF NOT EXISTS web_sessions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL REFERENCES users(id),
-    token_hash      TEXT NOT NULL UNIQUE,
+    session_token   TEXT NOT NULL UNIQUE,
+    ip_address      TEXT,
+    user_agent      TEXT,
+    created_at      INTEGER NOT NULL,
     expires_at      INTEGER NOT NULL,
-    created_at      INTEGER NOT NULL
+    last_used_at    INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS voice_options (
@@ -97,6 +100,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_uuid ON messages(message_uuid);
 
 CREATE INDEX IF NOT EXISTS idx_messages_read ON messages(project_id, is_read);
 
-CREATE INDEX IF NOT EXISTS idx_web_sessions_token ON web_sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_web_sessions_token ON web_sessions(session_token);
+CREATE INDEX IF NOT EXISTS idx_web_sessions_user ON web_sessions(user_id, expires_at DESC);
+CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_sse_events_project ON sse_events(project_id, created_at)
