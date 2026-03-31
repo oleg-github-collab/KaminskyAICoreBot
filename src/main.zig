@@ -60,9 +60,9 @@ pub fn main() !void {
     // 5. Initialize Redis client (optional)
     var redis: ?*redis_client.RedisClient = null;
     if (config.redis_url.len > 0) {
-        redis = redis_client.RedisClient.connect(allocator, config.redis_url) catch |err| {
+        redis = redis_client.RedisClient.connect(allocator, config.redis_url) catch |err| blk: {
             std.log.warn("Failed to connect to Redis: {}, continuing without cache", .{err});
-            null;
+            break :blk null;
         };
     } else {
         std.log.info("Redis not configured, running without cache/pubsub", .{});
