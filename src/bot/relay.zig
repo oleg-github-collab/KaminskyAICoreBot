@@ -95,7 +95,7 @@ pub fn handleAdminReply(
     } else |_| {}
 
     // Store admin->client message
-    const message_id = try db_messages.storeMessage(
+    _ = try db_messages.storeMessage(
         db,
         original.project_id,
         0, // admin
