@@ -82,7 +82,7 @@ pub fn handleTelegramAuth(req: *httpz.Request, res: *httpz.Response) !void {
     const redirect_url = try std.fmt.bufPrint(&redirect_buf, "/app?session_token={s}", .{session_token});
 
     res.status = 302;
-    try res.header("Location", redirect_url);
+    res.header("Location", redirect_url);
     std.log.info("Telegram OAuth: user {d} logged in", .{telegram_id});
 }
 
