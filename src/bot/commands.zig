@@ -502,7 +502,7 @@ fn handlePricing(
         \\Референсних файлів: {d}
         \\
         \\Текстові файли: €0.58 за 1800 символів
-        \\PDF файли: €0.89 за сторінку
+        \\PDF та документи: €0.89 за 1800 символів
         \\
         \\<b>Загальна вартість: €{s}</b>
     , .{ source_stats.count, ref_stats.count, price_str }) catch "Pricing info";

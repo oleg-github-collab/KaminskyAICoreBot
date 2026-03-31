@@ -6,8 +6,8 @@ import os
 import chardet
 
 CHARS_PER_PAGE = 1800
-PRICE_PER_PAGE_TEXT = 58  # cents (€0.58 per 1800 chars)
-PRICE_PER_PAGE_DOC = 89   # cents (€0.89 per page for PDF/binary docs)
+PRICE_PER_PAGE_TEXT = 58  # cents (€0.58 per 1800 chars — text files)
+PRICE_PER_PAGE_DOC = 89   # cents (€0.89 per 1800 chars — PDF/binary docs)
 
 
 def count_file(file_bytes: bytes, filename: str) -> dict:
@@ -44,7 +44,7 @@ def _count_pdf(file_bytes: bytes, filename: str) -> dict:
     from PyPDF2 import PdfReader
 
     reader = PdfReader(io.BytesIO(file_bytes))
-    pages = len(reader.pages)
+    physical_pages = len(reader.pages)
 
     total_chars = 0
     for page in reader.pages:
@@ -52,21 +52,24 @@ def _count_pdf(file_bytes: bytes, filename: str) -> dict:
         total_chars += len(text.strip())
 
     # If text extraction yielded very little, it's likely a scanned PDF
-    if total_chars < pages * 100:
+    # Fall back to physical page count for pricing
+    if total_chars < physical_pages * 100:
         return {
-            "pages": pages,
+            "pages": physical_pages,
             "chars": total_chars,
             "file_type": "pdf",
-            "pricing_cents": pages * PRICE_PER_PAGE_DOC,
+            "pricing_cents": physical_pages * PRICE_PER_PAGE_DOC,
             "method": "pdf_page_count",
             "note": "scanned_or_image_pdf",
         }
 
+    # Price by characters: €0.89 per 1800 chars
+    char_pages = max(1, math.ceil(total_chars / CHARS_PER_PAGE))
     return {
-        "pages": pages,
+        "pages": char_pages,
         "chars": total_chars,
         "file_type": "pdf",
-        "pricing_cents": pages * PRICE_PER_PAGE_DOC,
+        "pricing_cents": char_pages * PRICE_PER_PAGE_DOC,
         "method": "pdf_exact",
     }
 
@@ -149,11 +152,13 @@ def _count_pptx(file_bytes: bytes, filename: str) -> dict:
                     for cell in row.cells:
                         total_chars += len(cell.text)
 
+    # Price by characters: €0.89 per 1800 chars
+    char_pages = max(1, math.ceil(total_chars / CHARS_PER_PAGE))
     return {
-        "pages": pages,
+        "pages": char_pages,
         "chars": total_chars,
         "file_type": "pptx",
-        "pricing_cents": pages * PRICE_PER_PAGE_DOC,
+        "pricing_cents": char_pages * PRICE_PER_PAGE_DOC,
         "method": "pptx_exact",
     }
 
@@ -169,7 +174,7 @@ def _count_doc_legacy(file_bytes: bytes, filename: str) -> dict:
         "file_type": "doc",
         "pricing_cents": pages * PRICE_PER_PAGE_DOC,
         "method": "doc_estimate",
-        "note": "legacy_format_estimated",
+        "note": "legacy_format_estimated_by_chars",
     }
 
 

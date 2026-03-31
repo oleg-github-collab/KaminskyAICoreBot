@@ -35,7 +35,7 @@ pub const help =
     \\
     \\<b>Вартість:</b>
     \\• Текстові файли: €0.58 за кожні 1800 символів
-    \\• PDF файли: €0.89 за сторінку
+    \\• PDF та документи: €0.89 за кожні 1800 символів
     \\
     \\Натисніть «Написати спеціалісту» для зв'язку з нами.
     \\
@@ -192,7 +192,7 @@ pub const chatbot_system_prompt =
     \\SERVICE INFO:
     \\- Clients upload source files (text, PDF) and reference translations
     \\- Our specialists prepare professional glossaries of terms based on uploaded files
-    \\- Pricing: €0.58 per 1800 characters (text), €0.89 per page (PDF)
+    \\- Pricing: €0.58 per 1800 characters (text), €0.89 per 1800 characters (PDF/documents)
     \\- Payment is required before processing begins
     \\- Clients can create projects, invite team members, and manage files
     \\- Glossaries are reviewed by specialists before being shared

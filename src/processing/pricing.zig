@@ -1,4 +1,4 @@
-/// Pricing module: €0.58 per 1800 characters, €0.89 per page
+/// Pricing module: €0.58 per 1800 chars (text), €0.89 per 1800 chars (PDF/docs)
 const std = @import("std");
 
 /// Calculate price in euro cents for a text file
@@ -10,10 +10,11 @@ pub fn priceForChars(char_count: u64) i64 {
     return @intCast(units * 58);
 }
 
-/// Calculate price in euro cents for a PDF or document
+/// Calculate price in euro cents for a PDF or document.
+/// "page" = 1800 characters. €0.89 per 1800 chars.
 pub fn priceForPages(page_count: u64) i64 {
     if (page_count == 0) return 0;
-    // €0.89 per page = 89 cents
+    // €0.89 per 1800 chars = 89 cents per page-equivalent
     return @intCast(page_count * 89);
 }
 
