@@ -87,7 +87,22 @@ pub fn handleFileMessage(
         return;
     };
 
-    // 5. Calculate pricing via Python processor (accurate) with local fallback
+    // 5. Send progress message
+    var progress_msg_id: i64 = 0;
+    {
+        const progress_resp = try tg.sendMessage(msg.chat.id, "\u{231B} Аналізую файл...", null);
+        defer allocator.free(progress_resp);
+        if (std.json.parseFromSlice(struct {
+            result: ?struct { message_id: ?i64 = null } = null,
+        }, allocator, progress_resp, .{ .ignore_unknown_fields = true })) |parsed| {
+            defer parsed.deinit();
+            if (parsed.value.result) |r| {
+                progress_msg_id = r.message_id orelse 0;
+            }
+        } else |_| {}
+    }
+
+    // 6. Calculate pricing via Python processor (accurate) with local fallback
     var char_count: i64 = 0;
     var page_count: i64 = 0;
     var price_cents: i64 = 0;
@@ -121,7 +136,7 @@ pub fn handleFileMessage(
                         char_count = @intCast(pricing.countChars(d));
                         price_cents = pricing.priceForChars(@intCast(char_count));
                     } else {
-                        page_count = @intCast(pricing.estimateDocPages(d.len));
+                        page_count = @intCast(pricing.estimateDocPages(d.len, original_name));
                         price_cents = pricing.priceForPages(@intCast(page_count));
                     }
                 }
@@ -129,32 +144,57 @@ pub fn handleFileMessage(
         }
     }
 
-    // 6. Store in DB
+    // 7. Store in DB
     _ = try db_files.store(db, project_id, user.id, stored_name, original_name, mime, fsize, category, store_path, fid, char_count, page_count, price_cents);
 
-    // 7. Confirm to user
+    // 8. Build result message with price
     var size_buf: [32]u8 = undefined;
     const size_str = formatFileSize(&size_buf, @intCast(fsize));
 
-    var detail_buf: [64]u8 = undefined;
-    const detail = if (page_count > 0)
-        std.fmt.bufPrint(&detail_buf, "Сторінок: {d}", .{page_count}) catch ""
-    else if (char_count > 0)
-        std.fmt.bufPrint(&detail_buf, "Символів: {d}", .{char_count}) catch ""
-    else
-        "";
-
+    var euro_buf: [16]u8 = undefined;
     var resp_buf: [512]u8 = undefined;
-    const resp_text = std.fmt.bufPrint(&resp_buf,
-        \\Файл отримано: <b>{s}</b>
-        \\Розмір: {s}
-        \\{s}
-        \\
-        \\Продовжуйте надсилати файли або натисніть "Завершити завантаження".
-    , .{ original_name, size_str, detail }) catch "File received";
+    var resp_text: []const u8 = "\u{2705} Файл отримано";
 
-    const resp = try tg.sendMessage(msg.chat.id, resp_text, null);
-    allocator.free(resp);
+    if (price_cents > 0) {
+        const price_str = pricing.formatEuro(&euro_buf, price_cents);
+        if (char_count > 0) {
+            resp_text = std.fmt.bufPrint(&resp_buf,
+                \\<b>{s}</b>
+                \\Розмір: {s} | Символів: {d}
+                \\Вартість: €{s}
+                \\
+                \\Продовжуйте надсилати або натисніть «Завершити».
+            , .{ original_name, size_str, char_count, price_str }) catch resp_text;
+        } else {
+            resp_text = std.fmt.bufPrint(&resp_buf,
+                \\<b>{s}</b>
+                \\Розмір: {s} | Сторінок: {d}
+                \\Вартість: €{s}
+                \\
+                \\Продовжуйте надсилати або натисніть «Завершити».
+            , .{ original_name, size_str, page_count, price_str }) catch resp_text;
+        }
+    } else {
+        resp_text = std.fmt.bufPrint(&resp_buf,
+            \\<b>{s}</b>
+            \\Розмір: {s}
+            \\
+            \\Продовжуйте надсилати або натисніть «Завершити».
+        , .{ original_name, size_str }) catch resp_text;
+    }
+
+    // Edit progress message with results, or send new if edit fails
+    if (progress_msg_id != 0) {
+        if (tg.editMessageText(msg.chat.id, progress_msg_id, resp_text)) |edit_resp| {
+            allocator.free(edit_resp);
+        } else |_| {
+            const resp = try tg.sendMessage(msg.chat.id, resp_text, null);
+            allocator.free(resp);
+        }
+    } else {
+        const resp = try tg.sendMessage(msg.chat.id, resp_text, null);
+        allocator.free(resp);
+    }
 
     // 8. Notify admin with context header
     var admin_buf: [512]u8 = undefined;

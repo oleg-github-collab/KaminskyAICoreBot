@@ -140,10 +140,39 @@ pub fn isPdfContent(data: []const u8) bool {
 }
 
 /// Estimate page count for binary document files (.docx, .doc, etc.)
-/// Based on average ~30 KB per page for typical documents.
-pub fn estimateDocPages(file_size: u64) u64 {
+/// Uses format-specific heuristics based on typical text-to-binary ratios.
+pub fn estimateDocPages(file_size: u64, filename: []const u8) u64 {
     if (file_size == 0) return 0;
-    const pages = (file_size + 29999) / 30000;
+
+    // Extract and lowercase extension
+    var ext_lower: [16]u8 = undefined;
+    var ext_len: usize = 0;
+    if (std.mem.lastIndexOfScalar(u8, filename, '.')) |dot_idx| {
+        const raw_ext = filename[dot_idx..];
+        ext_len = @min(raw_ext.len, 16);
+        for (0..ext_len) |i| {
+            ext_lower[i] = if (raw_ext[i] >= 'A' and raw_ext[i] <= 'Z') raw_ext[i] + 32 else raw_ext[i];
+        }
+    }
+    const ext = ext_lower[0..ext_len];
+
+    // .docx: XML in ZIP, ~40% text content → file_size * 0.4 / 1800 ≈ file_size / 4500
+    if (std.mem.eql(u8, ext, ".docx") or std.mem.eql(u8, ext, ".doc")) {
+        const pages = file_size / 4500;
+        return if (pages > 0) pages else 1;
+    }
+    // .xlsx: mostly XML overhead, less text per byte
+    if (std.mem.eql(u8, ext, ".xlsx") or std.mem.eql(u8, ext, ".xls")) {
+        const pages = file_size / 8000;
+        return if (pages > 0) pages else 1;
+    }
+    // .pptx: heavy layout/media, count by typical slide size
+    if (std.mem.eql(u8, ext, ".pptx") or std.mem.eql(u8, ext, ".ppt")) {
+        const pages = file_size / 15000;
+        return if (pages > 0) pages else 1;
+    }
+    // Generic binary document
+    const pages = file_size / 5000;
     return if (pages > 0) pages else 1;
 }
 

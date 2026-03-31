@@ -25,29 +25,48 @@ pub fn countDocument(
     var url_buf: [512]u8 = undefined;
     const url = try std.fmt.bufPrint(&url_buf, "{s}/count", .{processor_url});
 
-    // Use curl to upload file to processor
+    std.log.info("Processor: POST {s} file={s}", .{ url, original_name });
+
+    // Use curl to upload file to processor (-f = fail on HTTP 4xx/5xx)
+    const auth_header = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key});
+    defer allocator.free(auth_header);
+    const file_arg = try std.fmt.allocPrint(allocator, "file=@{s};filename={s}", .{ file_path, original_name });
+    defer allocator.free(file_arg);
+
     const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{
             "curl",
             "-s",
+            "-f",
+            "--connect-timeout",
+            "10",
             "--max-time",
-            "60",
+            "120",
             "-X",
             "POST",
             "-H",
-            try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key}),
+            auth_header,
             "-F",
-            try std.fmt.allocPrint(allocator, "file=@{s};filename={s}", .{ file_path, original_name }),
+            file_arg,
             url,
         },
     });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
 
-    if (result.term.Exited != 0) {
-        std.log.err("Processor /count failed: curl exit {d}, stderr: {s}", .{ result.term.Exited, result.stderr });
+    const exited_ok = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!exited_ok) {
+        std.log.err("Processor /count failed, stderr: {s}", .{result.stderr});
         return error.ProcessorCallFailed;
+    }
+
+    if (result.stdout.len == 0) {
+        std.log.err("Processor /count: empty response", .{});
+        return error.InvalidProcessorResponse;
     }
 
     // Parse JSON response
@@ -98,11 +117,17 @@ pub fn translateText(
     }, .{});
     defer allocator.free(body);
 
+    const auth_header = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key});
+    defer allocator.free(auth_header);
+
     const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{
             "curl",
             "-s",
+            "-f",
+            "--connect-timeout",
+            "10",
             "--max-time",
             "120",
             "-X",
@@ -110,7 +135,7 @@ pub fn translateText(
             "-H",
             "Content-Type: application/json",
             "-H",
-            try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key}),
+            auth_header,
             "-d",
             body,
             url,
@@ -118,8 +143,13 @@ pub fn translateText(
     });
     defer allocator.free(result.stderr);
 
-    if (result.term.Exited != 0) {
+    const exited_ok = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!exited_ok) {
         allocator.free(result.stdout);
+        std.log.err("Processor /deepl/translate-text failed, stderr: {s}", .{result.stderr});
         return error.ProcessorCallFailed;
     }
 
@@ -159,11 +189,17 @@ pub fn validateGlossary(
     }, .{});
     defer allocator.free(body);
 
+    const auth_hdr = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key});
+    defer allocator.free(auth_hdr);
+
     const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{
             "curl",
             "-s",
+            "-f",
+            "--connect-timeout",
+            "10",
             "--max-time",
             "30",
             "-X",
@@ -171,7 +207,7 @@ pub fn validateGlossary(
             "-H",
             "Content-Type: application/json",
             "-H",
-            try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key}),
+            auth_hdr,
             "-d",
             body,
             url,
@@ -180,7 +216,11 @@ pub fn validateGlossary(
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
 
-    if (result.term.Exited != 0) return error.ProcessorCallFailed;
+    const ok = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!ok) return error.ProcessorCallFailed;
 
     const parsed = std.json.parseFromSlice(struct {
         valid: ?bool = null,
@@ -228,11 +268,17 @@ pub fn extractTerms(
     }, .{});
     defer allocator.free(body);
 
+    const auth_h = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key});
+    defer allocator.free(auth_h);
+
     const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{
             "curl",
             "-s",
+            "-f",
+            "--connect-timeout",
+            "10",
             "--max-time",
             "180",
             "-X",
@@ -240,7 +286,7 @@ pub fn extractTerms(
             "-H",
             "Content-Type: application/json",
             "-H",
-            try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key}),
+            auth_h,
             "-d",
             body,
             url,
@@ -248,7 +294,11 @@ pub fn extractTerms(
     });
     defer allocator.free(result.stderr);
 
-    if (result.term.Exited != 0) {
+    const ok2 = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!ok2) {
         allocator.free(result.stdout);
         return error.ProcessorCallFailed;
     }
@@ -269,11 +319,17 @@ pub fn submitBatchExtraction(
     var url_buf: [512]u8 = undefined;
     const url = try std.fmt.bufPrint(&url_buf, "{s}/ai/extract-terms-batch", .{processor_url});
 
+    const batch_auth = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key});
+    defer allocator.free(batch_auth);
+
     const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{
             "curl",
             "-s",
+            "-f",
+            "--connect-timeout",
+            "10",
             "--max-time",
             "60",
             "-X",
@@ -281,7 +337,7 @@ pub fn submitBatchExtraction(
             "-H",
             "Content-Type: application/json",
             "-H",
-            try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key}),
+            batch_auth,
             "-d",
             chunks_json,
             url,
@@ -289,7 +345,11 @@ pub fn submitBatchExtraction(
     });
     defer allocator.free(result.stderr);
 
-    if (result.term.Exited != 0) {
+    const ok3 = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!ok3) {
         allocator.free(result.stdout);
         return error.ProcessorCallFailed;
     }
@@ -309,21 +369,31 @@ pub fn checkBatch(
     var url_buf: [512]u8 = undefined;
     const url = try std.fmt.bufPrint(&url_buf, "{s}/ai/batch/{s}", .{ processor_url, batch_id });
 
+    const check_auth = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key});
+    defer allocator.free(check_auth);
+
     const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{
             "curl",
             "-s",
+            "-f",
+            "--connect-timeout",
+            "10",
             "--max-time",
             "30",
             "-H",
-            try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key}),
+            check_auth,
             url,
         },
     });
     defer allocator.free(result.stderr);
 
-    if (result.term.Exited != 0) {
+    const ok4 = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!ok4) {
         allocator.free(result.stdout);
         return error.ProcessorCallFailed;
     }

@@ -61,6 +61,23 @@ pub const TelegramClient = struct {
         return self.callRaw("sendMessage", body.items);
     }
 
+    /// Edit a previously sent text message. Returns raw response JSON.
+    pub fn editMessageText(self: *TelegramClient, chat_id: i64, message_id: i64, text: []const u8) ![]const u8 {
+        var body = std.ArrayList(u8).init(self.allocator);
+        defer body.deinit();
+
+        var writer = body.writer();
+        try writer.writeAll("{\"chat_id\":");
+        try std.fmt.formatInt(chat_id, 10, .lower, .{}, writer);
+        try writer.writeAll(",\"message_id\":");
+        try std.fmt.formatInt(message_id, 10, .lower, .{}, writer);
+        try writer.writeAll(",\"text\":");
+        try std.json.stringify(text, .{}, writer);
+        try writer.writeAll(",\"parse_mode\":\"HTML\"}");
+
+        return self.callRaw("editMessageText", body.items);
+    }
+
     /// Copy a message from one chat to another
     pub fn copyMessage(self: *TelegramClient, to_chat_id: i64, from_chat_id: i64, message_id: i64) ![]const u8 {
         var buf: [256]u8 = undefined;

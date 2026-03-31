@@ -821,7 +821,7 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
                 char_count = @intCast(pricing.countChars(file_field.value));
                 price_cents = pricing.priceForChars(@intCast(char_count));
             } else {
-                page_count = @intCast(pricing.estimateDocPages(file_field.value.len));
+                page_count = @intCast(pricing.estimateDocPages(file_field.value.len, original_name));
                 price_cents = pricing.priceForPages(@intCast(page_count));
             }
         }
