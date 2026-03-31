@@ -2,6 +2,7 @@ const MessagesView = {
     eventSource: null,
     currentPid: null,
     seenUuids: new Set(),
+    quill: null,
 
     async render(c, project) {
         this.disconnect();
@@ -24,14 +25,39 @@ const MessagesView = {
                         <div class="typing-dot"></div>
                     </div>
                 </div>
-                <div class="chat-input-area">
-                    <input id="msg-input" class="input" placeholder="Напишіть повідомлення..." style="flex:1"
-                        onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();MessagesView.send(${project.id})}">
-                    <button class="btn btn-primary" style="width:auto;padding:8px 16px" onclick="MessagesView.send(${project.id})">➤</button>
+                <div class="chat-input-area" style="flex-direction:column;align-items:stretch">
+                    <div id="quill-editor" style="min-height:60px;background:var(--bg-secondary);border-radius:6px;margin-bottom:8px"></div>
+                    <button class="btn btn-primary" style="width:100px;align-self:flex-end" onclick="MessagesView.send(${project.id})">Відправити ➤</button>
                 </div>
             </div>`;
         await this.loadMessages(project.id);
         this.connectSSE(project.id);
+        this.initQuill();
+    },
+
+    initQuill() {
+        const editor = document.getElementById('quill-editor');
+        if (!editor || !window.Quill) return;
+
+        this.quill = new Quill('#quill-editor', {
+            theme: 'snow',
+            placeholder: 'Напишіть повідомлення...',
+            modules: {
+                toolbar: [
+                    ['bold', 'italic', 'underline'],
+                    [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                    ['link']
+                ]
+            }
+        });
+
+        // Handle Enter key to send (Shift+Enter for new line)
+        this.quill.root.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (this.currentPid) this.send(this.currentPid);
+            }
+        });
     },
 
     async loadMessages(pid) {
@@ -56,10 +82,19 @@ const MessagesView = {
         const isOut = m.direction === 'to_admin' || m.direction === 'client_to_admin';
         const name = m.sender_name || '';
         const readMark = m.is_read ? ' ✓✓' : ' ✓';
+
+        // Render HTML content if format is html, otherwise escape plain text
+        let contentHtml = '';
+        if (m.content_format === 'html') {
+            contentHtml = m.content || '[медіа]';
+        } else {
+            contentHtml = App.esc(m.content || '[медіа]');
+        }
+
         return `
             <div class="chat-bubble ${isOut ? 'chat-bubble-out' : 'chat-bubble-in'}" data-uuid="${App.esc(m.message_uuid || '')}">
                 ${!isOut && name ? `<div class="chat-sender">${App.esc(name)}</div>` : ''}
-                <div class="chat-text">${App.esc(m.content || '[медіа]')}</div>
+                <div class="chat-text">${contentHtml}</div>
                 <div class="chat-time">${App.fmtDate(m.created_at)}${isOut ? readMark : ''}</div>
             </div>`;
     },
@@ -161,15 +196,23 @@ const MessagesView = {
     },
 
     async send(pid) {
-        const input = document.getElementById('msg-input');
-        if (!input) return;
-        const content = input.value.trim();
-        if (!content) return;
-        input.value = '';
-        input.disabled = true;
+        if (!this.quill) return;
+
+        const html = this.quill.root.innerHTML;
+        const text = this.quill.getText().trim();
+
+        if (!text) {
+            App.toast('Повідомлення не може бути порожнім', 'warning');
+            return;
+        }
+
+        // Clear editor and disable
+        const oldHtml = html;
+        this.quill.setText('');
+        this.quill.enable(false);
 
         try {
-            const result = await API.sendMessage(pid, content);
+            const result = await API.sendMessage(pid, { content: html, format: 'html' });
             if (result.uuid) this.seenUuids.add(result.uuid);
 
             const list = document.getElementById('messages-list');
@@ -180,7 +223,8 @@ const MessagesView = {
                 const div = document.createElement('div');
                 div.innerHTML = this.renderBubble({
                     direction: 'to_admin',
-                    content: content,
+                    content: html,
+                    content_format: 'html',
                     created_at: Math.floor(Date.now() / 1000),
                     message_uuid: result.uuid,
                     is_read: false
@@ -188,11 +232,17 @@ const MessagesView = {
                 list.appendChild(div.firstElementChild);
                 list.scrollTop = list.scrollHeight;
             }
+
+            // Haptic feedback if Telegram Mini App
+            if (App.tg && App.tg.HapticFeedback) {
+                App.tg.HapticFeedback.notificationOccurred('success');
+            }
         } catch (e) {
             App.toast(e.message, 'error');
-            input.value = content;
+            this.quill.root.innerHTML = oldHtml;
         }
-        input.disabled = false;
-        input.focus();
+
+        this.quill.enable(true);
+        this.quill.focus();
     }
 };

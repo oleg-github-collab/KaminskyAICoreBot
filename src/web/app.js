@@ -31,6 +31,139 @@ const App = {
 
         this.buildNav();
         this.navigate('projects');
+        this.setupKeyboardShortcuts();
+    },
+
+    setupKeyboardShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            // Ignore if typing in input/textarea
+            if (e.target.matches('input, textarea, [contenteditable="true"]')) {
+                return;
+            }
+
+            // Ctrl/Cmd + K → Focus search
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                const search = document.querySelector('.search-bar input, #glossary-search');
+                if (search) {
+                    search.focus();
+                    search.select();
+                    this.toast('🔍 Пошук активовано', 'info');
+                }
+            }
+
+            // Ctrl/Cmd + S → Export glossary
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault();
+                if (this.currentView === 'glossary' && this.currentProject) {
+                    GlossaryView.exportTSV(this.currentProject.id);
+                    this.toast('📥 Експорт глосарію...', 'info');
+                }
+            }
+
+            // Ctrl/Cmd + A → Select all terms (in glossary view)
+            if ((e.ctrlKey || e.metaKey) && e.key === 'a' && this.currentView === 'glossary') {
+                e.preventDefault();
+                if (this.currentProject && GlossaryView.selectAll) {
+                    GlossaryView.selectAll();
+                    this.toast('✓ Усі терміни обрано', 'info');
+                }
+            }
+
+            // Ctrl/Cmd + Z → Undo
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                if (this.currentView === 'glossary' && window.glossaryHistory) {
+                    const action = glossaryHistory.undo();
+                    if (action) {
+                        this.toast(`↶ Скасовано: ${action.description}`, 'info');
+                    } else {
+                        this.toast('Нічого скасовувати', 'warning');
+                    }
+                }
+            }
+
+            // Ctrl/Cmd + Shift + Z → Redo
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z') {
+                e.preventDefault();
+                if (this.currentView === 'glossary' && window.glossaryHistory) {
+                    const action = glossaryHistory.redo();
+                    if (action) {
+                        this.toast(`↷ Повторено: ${action.description}`, 'info');
+                    } else {
+                        this.toast('Нічого повторювати', 'warning');
+                    }
+                }
+            }
+
+            // Escape → Close modals / Deselect all
+            if (e.key === 'Escape') {
+                // Close modals first
+                const modals = document.querySelectorAll('.modal-overlay');
+                if (modals.length > 0) {
+                    modals.forEach(m => m.remove());
+                    return;
+                }
+
+                // Deselect all in glossary
+                if (this.currentView === 'glossary' && GlossaryView.deselectAll) {
+                    GlossaryView.deselectAll();
+                }
+            }
+
+            // ? → Show keyboard shortcuts help
+            if (e.key === '?' && !e.shiftKey) {
+                e.preventDefault();
+                this.showKeyboardHelp();
+            }
+
+            // Alt + 1-8 → Navigate between views
+            if (e.altKey && e.key >= '1' && e.key <= '8') {
+                e.preventDefault();
+                const views = ['projects', 'files', 'pricing', 'glossary', 'versions', 'settings', 'team', 'messages'];
+                const index = parseInt(e.key) - 1;
+                if (views[index]) {
+                    this.navigate(views[index]);
+                }
+            }
+        });
+    },
+
+    showKeyboardHelp() {
+        const shortcuts = [
+            { keys: 'Ctrl+K', desc: 'Фокус на пошуку' },
+            { keys: 'Ctrl+S', desc: 'Експорт глосарію' },
+            { keys: 'Ctrl+A', desc: 'Обрати всі терміни' },
+            { keys: 'Ctrl+Z', desc: 'Скасувати дію' },
+            { keys: 'Ctrl+Shift+Z', desc: 'Повторити дію' },
+            { keys: 'Escape', desc: 'Закрити модальне вікно' },
+            { keys: 'Alt+1-8', desc: 'Перемкнути вкладку' },
+            { keys: '?', desc: 'Показати цю довідку' },
+        ];
+
+        const html = `
+            <div class="modal">
+                <h3>⌨️ Гарячі клавіші</h3>
+                <table style="width:100%;text-align:left;margin:16px 0">
+                    ${shortcuts.map(s => `
+                        <tr>
+                            <td style="padding:6px 12px;font-family:monospace;background:var(--bg-secondary);border-radius:4px;margin-right:12px;white-space:nowrap">
+                                ${this.esc(s.keys)}
+                            </td>
+                            <td style="padding:6px 12px">${this.esc(s.desc)}</td>
+                        </tr>
+                    `).join('')}
+                </table>
+                <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Закрити</button>
+            </div>`;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = html;
+        document.body.appendChild(overlay);
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) overlay.remove();
+        });
     },
 
     buildNav() {

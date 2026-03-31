@@ -89,23 +89,60 @@ const API = {
     getMessages(pid) { return this.req('GET', '/projects/' + pid + '/messages'); },
     sendMessage(pid, content) { return this.req('POST', '/projects/' + pid + '/messages', { content }); },
 
-    // SSE stream helper
+    // WebSocket stream helper (replaces SSE)
     connectMessageStream(pid, onMessage, onError) {
-        const url = this.base + '/projects/' + pid + '/messages/stream';
-        const auth = this.initData();
-        const separator = url.includes('?') ? '&' : '?';
-        const fullUrl = url + separator + 'auth=' + encodeURIComponent(auth);
-        const es = new EventSource(fullUrl);
-        es.onmessage = function(event) {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const auth = encodeURIComponent(this.initData());
+        const wsUrl = `${protocol}//${window.location.host}/api/projects/${pid}/ws?auth=${auth}`;
+
+        const ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            console.log('[WebSocket] Connected to project', pid);
+            // Send ping every 30s to keep connection alive
+            ws._pingInterval = setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'ping' }));
+                }
+            }, 30000);
+        };
+
+        ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
+                if (data.type === 'pong') {
+                    // Ignore ping/pong
+                    return;
+                }
                 if (onMessage) onMessage(data);
-            } catch (e) { /* ignore parse errors */ }
+            } catch (e) {
+                console.error('[WebSocket] Parse error:', e);
+            }
         };
-        es.onerror = function() {
+
+        ws.onerror = (err) => {
+            console.error('[WebSocket] Error:', err);
             if (onError) onError();
         };
-        return es;
+
+        ws.onclose = () => {
+            console.log('[WebSocket] Disconnected from project', pid);
+            clearInterval(ws._pingInterval);
+            // Auto-reconnect after 3 seconds
+            setTimeout(() => {
+                console.log('[WebSocket] Attempting reconnect...');
+                this.connectMessageStream(pid, onMessage, onError);
+            }, 3000);
+        };
+
+        // Helper method to send typing indicator
+        ws.sendTyping = function() {
+            if (this.readyState === WebSocket.OPEN) {
+                this.send(JSON.stringify({ type: 'typing' }));
+            }
+        };
+
+        return ws;
     },
 
     // Pricing

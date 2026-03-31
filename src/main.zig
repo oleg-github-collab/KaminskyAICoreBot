@@ -7,6 +7,8 @@ const storage = @import("storage/filesystem.zig");
 const tg_client = @import("telegram/client.zig");
 const handler = @import("webhook/handler.zig");
 const miniapp_api = @import("api/miniapp.zig");
+const redis_client = @import("redis/client.zig");
+const websocket = @import("realtime/websocket.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -54,25 +56,38 @@ pub fn main() !void {
     };
     std.log.info("Database ready", .{});
 
-    // 5. Initialize Telegram client and set webhook
+    // 5. Initialize Redis client (optional)
+    var redis: ?*redis_client.RedisClient = null;
+    if (config.redis_url.len > 0) {
+        redis = redis_client.RedisClient.connect(allocator, config.redis_url) catch |err| {
+            std.log.warn("Failed to connect to Redis: {}, continuing without cache", .{err});
+            null;
+        };
+    } else {
+        std.log.info("Redis not configured, running without cache/pubsub", .{});
+    }
+    defer if (redis) |r| r.disconnect();
+
+    // 6. Initialize Telegram client and set webhook
     var tg = tg_client.TelegramClient.init(allocator, config.bot_token);
     tg.setWebhook(config.webhook_url, config.webhook_secret) catch |err| {
         std.log.err("Failed to set webhook: {}", .{err});
         return err;
     };
 
-    // 6. Set admin user
+    // 7. Set admin user
     @import("db/users.zig").setAdmin(&db, config.admin_chat_id) catch {};
 
-    // 7. Store global app context
+    // 8. Store global app context
     handler.app_global = .{
         .config = config,
         .db = db,
         .tg = tg,
         .allocator = allocator,
+        .redis = redis,
     };
 
-    // 8. Configure and start HTTP server
+    // 9. Configure and start HTTP server
     var server = try httpz.Server(void).init(allocator, .{
         .port = config.port,
         .address = "0.0.0.0",
@@ -101,6 +116,8 @@ pub fn main() !void {
     router.get("/app/app.css", serveCSS, .{});
     router.get("/app/app.js", serveAppJS, .{});
     router.get("/app/lib/api-client.js", serveApiClientJS, .{});
+    router.get("/app/lib/optimistic.js", serveOptimisticJS, .{});
+    router.get("/app/lib/history.js", serveHistoryJS, .{});
     router.get("/app/components/projects.js", serveProjectsJS, .{});
     router.get("/app/components/files.js", serveFilesJS, .{});
     router.get("/app/components/team.js", serveTeamJS, .{});
@@ -113,6 +130,10 @@ pub fn main() !void {
 
     // REST API for Mini App
     router.get("/api/health", handler.handleHealth, .{});
+
+    // WebSocket for real-time updates
+    router.get("/api/projects/:project_id/ws", websocket.handleUpgrade, .{});
+
     router.get("/api/projects", miniapp_api.handleProjects, .{});
     router.post("/api/projects", miniapp_api.handleCreateProject, .{});
     router.get("/api/projects/:project_id", miniapp_api.handleGetProject, .{});
@@ -212,4 +233,14 @@ fn serveAuthJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
     res.body = @embedFile("web/lib/auth.js");
+}
+fn serveOptimisticJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/lib/optimistic.js");
+}
+fn serveHistoryJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/lib/history.js");
 }

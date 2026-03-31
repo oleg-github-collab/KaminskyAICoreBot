@@ -42,6 +42,9 @@ pub fn build(b: *std.Build) void {
     exe.linkLibrary(sqlite);
     exe.linkLibC();
 
+    // Redis (hiredis) C library
+    exe.linkSystemLibrary("hiredis");
+
     b.installArtifact(exe);
 
     // --- Run step ---
@@ -60,6 +63,7 @@ pub fn build(b: *std.Build) void {
     unit_tests.addIncludePath(b.path("libs"));
     unit_tests.linkLibrary(sqlite);
     unit_tests.linkLibC();
+    unit_tests.linkSystemLibrary("hiredis");
 
     const run_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");

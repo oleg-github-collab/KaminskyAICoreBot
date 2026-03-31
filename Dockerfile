@@ -43,7 +43,7 @@ RUN zig build -Doptimize=ReleaseSafe 2>&1 || \
 FROM ubuntu:22.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl && \
+    ca-certificates curl libhiredis0.14 libhiredis-dev && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -11,12 +11,14 @@ const files_mod = @import("../bot/files.zig");
 const workflow = @import("../bot/workflow.zig");
 const msgs = @import("../bot/messages_ua.zig");
 const config_mod = @import("../config.zig");
+const redis_client = @import("../redis/client.zig");
 
 pub const App = struct {
     config: config_mod.Config,
     db: sqlite.Db,
     tg: tg_client.TelegramClient,
     allocator: std.mem.Allocator,
+    redis: ?*redis_client.RedisClient,
 };
 
 /// Global application context, set by main.zig before server starts
