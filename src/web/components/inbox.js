@@ -399,7 +399,7 @@ const InboxView = {
 };
 
 // Add CSS
-const style = document.createElement('style');
+const inboxStyle = document.createElement('style');
 style.textContent = `
     .inbox-container {
         max-width: 1200px;
@@ -682,4 +682,4 @@ style.textContent = `
         border-top: 1px solid var(--border);
     }
 `;
-document.head.appendChild(style);
+document.head.appendChild(inboxStyle);

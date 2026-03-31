@@ -477,7 +477,7 @@ const InstructionsView = {
 };
 
 // Add CSS
-const style = document.createElement('style');
+const instructionsStyle = document.createElement('style');
 style.textContent = `
     .instructions-container {
         max-width: 1400px;
@@ -718,4 +718,4 @@ style.textContent = `
         }
     }
 `;
-document.head.appendChild(style);
+document.head.appendChild(instructionsStyle);

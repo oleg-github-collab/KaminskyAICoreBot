@@ -278,7 +278,7 @@ class FileStats {
 window.FileStatsInstance = new FileStats();
 
 // Add CSS
-const style = document.createElement('style');
+const fileStatsStyle = document.createElement('style');
 style.textContent = `
     .file-stats-panel {
         background: var(--bg);
@@ -418,4 +418,4 @@ style.textContent = `
         overflow-y: auto;
     }
 `;
-document.head.appendChild(style);
+document.head.appendChild(fileStatsStyle);
