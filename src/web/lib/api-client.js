@@ -159,4 +159,39 @@ const API = {
 
     // Auth
     createSession() { return this.req('POST', '/auth/session'); },
+
+    // Search (FTS5)
+    searchGlossary(pid, query, filters) {
+        const params = new URLSearchParams({ q: query });
+        if (filters) {
+            if (filters.approved !== undefined) params.append('approved', filters.approved);
+            if (filters.pending !== undefined) params.append('pending', filters.pending);
+            if (filters.source !== undefined) params.append('source', filters.source);
+            if (filters.target !== undefined) params.append('target', filters.target);
+            if (filters.domain !== undefined) params.append('domain', filters.domain);
+        }
+        return this.req('GET', '/projects/' + pid + '/glossary/search?' + params.toString());
+    },
+
+    // Comments
+    getComments(pid, resourceType, resourceId) {
+        return this.req('GET', '/projects/' + pid + '/comments?type=' + resourceType + '&id=' + resourceId);
+    },
+    createComment(pid, resourceType, resourceId, data) {
+        return this.req('POST', '/projects/' + pid + '/comments', { ...data, resource_type: resourceType, resource_id: resourceId });
+    },
+    deleteComment(pid, commentId) {
+        return this.req('DELETE', '/projects/' + pid + '/comments/' + commentId);
+    },
+
+    // Git versioning
+    getBranches(pid) { return this.req('GET', '/projects/' + pid + '/branches'); },
+    createBranch(pid, name) { return this.req('POST', '/projects/' + pid + '/branches', { name }); },
+    switchBranch(pid, branchId) { return this.req('POST', '/projects/' + pid + '/branches/' + branchId + '/switch'); },
+    getCommits(pid, branchId) { return this.req('GET', '/projects/' + pid + '/branches/' + branchId + '/commits'); },
+    getCommitPreview(pid) { return this.req('GET', '/projects/' + pid + '/commit-preview'); },
+    createCommit(pid, message) { return this.req('POST', '/projects/' + pid + '/commits', { message }); },
+
+    // Project CRUD
+    updateProject(pid, data) { return this.req('PUT', '/projects/' + pid, data); },
 };

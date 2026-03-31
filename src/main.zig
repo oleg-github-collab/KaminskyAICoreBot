@@ -132,6 +132,9 @@ pub fn main() !void {
     router.get("/app/components/messages.js", serveMessagesJS, .{});
     router.get("/app/components/glossary-versions.js", serveGlossaryVersionsJS, .{});
     router.get("/app/components/settings.js", serveSettingsJS, .{});
+    router.get("/app/components/search.js", serveSearchJS, .{});
+    router.get("/app/components/comments.js", serveCommentsJS, .{});
+    router.get("/app/components/git-versioning.js", serveGitVersioningJS, .{});
     router.get("/app/lib/auth.js", serveAuthJS, .{});
 
     // REST API for Mini App
@@ -286,4 +289,19 @@ fn handleVerifySession(req: *httpz.Request, res: *httpz.Response) !void {
     } else {
         try res.json(.{ .valid = false }, .{});
     }
+}
+fn serveSearchJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/search.js");
+}
+fn serveCommentsJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/comments.js");
+}
+fn serveGitVersioningJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/git-versioning.js");
 }
