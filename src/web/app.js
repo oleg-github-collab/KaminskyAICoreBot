@@ -176,6 +176,8 @@ const App = {
         const views = [
             { id: 'projects', label: 'Проєкти', icon: '📁' },
             { id: 'files', label: 'Файли', icon: '📄' },
+            { id: 'inbox', label: 'Вхідні', icon: '📥' },
+            { id: 'instructions', label: 'Інструкції', icon: '📝' },
             { id: 'pricing', label: 'Вартість', icon: '💰' },
             { id: 'glossary', label: 'Глосарій', icon: '📋' },
             { id: 'versions', label: 'Версії', icon: '📊' },
@@ -199,6 +201,8 @@ const App = {
         switch (view) {
             case 'projects': ProjectsView.render(c); break;
             case 'files': FilesView.render(c, this.currentProject); break;
+            case 'inbox': InboxView.render(c, this.currentProject); break;
+            case 'instructions': InstructionsView.render(c, this.currentProject); break;
             case 'glossary': GlossaryView.render(c, this.currentProject); break;
             case 'versions': GlossaryVersionsView.render(c, this.currentProject); break;
             case 'settings': SettingsView.render(c, this.currentProject); break;
