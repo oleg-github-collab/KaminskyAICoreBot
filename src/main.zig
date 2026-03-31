@@ -9,6 +9,7 @@ const handler = @import("webhook/handler.zig");
 const miniapp_api = @import("api/miniapp.zig");
 const redis_client = @import("redis/client.zig");
 const websocket = @import("realtime/websocket.zig");
+const telegram_oauth = @import("auth/telegram_oauth.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -111,7 +112,12 @@ pub fn main() !void {
     // Health check
     router.get("/health", handler.handleHealth, .{});
 
+    // Web login page (Telegram OAuth)
+    router.get("/login", serveLogin, .{});
+    router.get("/auth/telegram", telegram_oauth.handleTelegramAuth, .{});
+
     // Mini App static files (compiled into binary via @embedFile)
+    router.get("/", serveIndex, .{}); // Root also serves app
     router.get("/app", serveIndex, .{});
     router.get("/app/app.css", serveCSS, .{});
     router.get("/app/app.js", serveAppJS, .{});
@@ -130,6 +136,10 @@ pub fn main() !void {
 
     // REST API for Mini App
     router.get("/api/health", handler.handleHealth, .{});
+
+    // Authentication endpoints
+    router.post("/api/auth/session", miniapp_api.handleCreateSession, .{});
+    router.get("/api/auth/verify", handleVerifySession, .{});
 
     // WebSocket for real-time updates
     router.get("/api/projects/:project_id/ws", websocket.handleUpgrade, .{});
@@ -243,4 +253,37 @@ fn serveHistoryJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
     res.body = @embedFile("web/lib/history.js");
+}
+fn serveLogin(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "text/html; charset=utf-8");
+    res.body = @embedFile("web/login.html");
+}
+
+fn handleVerifySession(req: *httpz.Request, res: *httpz.Response) !void {
+    const a = handler.app();
+
+    const auth_header = req.header("Authorization");
+    if (auth_header == null) {
+        try res.json(.{ .valid = false }, .{});
+        return;
+    }
+
+    const auth = auth_header.?;
+    if (!std.mem.startsWith(u8, auth, "Bearer ")) {
+        try res.json(.{ .valid = false }, .{});
+        return;
+    }
+
+    const token = auth[7..];
+    const user_id = telegram_oauth.verifyWebSession(a.allocator, &a.db, token) catch {
+        try res.json(.{ .valid = false }, .{});
+        return;
+    };
+
+    if (user_id) |uid| {
+        try res.json(.{ .valid = true, .user_id = uid }, .{});
+    } else {
+        try res.json(.{ .valid = false }, .{});
+    }
 }

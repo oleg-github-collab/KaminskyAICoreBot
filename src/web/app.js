@@ -5,7 +5,15 @@ const App = {
     isAdmin: false,
     isDesktop: false,
 
-    init() {
+    async init() {
+        // Check authentication first (for web browser mode)
+        if (typeof Auth !== 'undefined' && Auth.isWebBrowser()) {
+            const isAuthed = await Auth.checkAuthAndRedirect();
+            if (!isAuthed) {
+                return; // Will redirect to /login
+            }
+        }
+
         if (this.tg && this.tg.initData) {
             this.tg.ready();
             this.tg.expand();
@@ -17,9 +25,6 @@ const App = {
         this.isDesktop = typeof Auth !== 'undefined' && Auth.isDesktop();
         if (this.isDesktop) {
             document.body.classList.add('desktop');
-            if (this.tg && this.tg.initData && !Auth.getToken()) {
-                Auth.createSession();
-            }
         }
 
         // Create toast container
