@@ -155,18 +155,15 @@ fn authenticateImpl(req: *httpz.Request) !db_users.UserRecord {
 }
 
 fn authenticateBearer(a: *handler.App, token: []const u8) !db_users.UserRecord {
-    // Hash the token to compare with stored hash
-    var hash_out: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(token, &hash_out, .{});
-    var hash_hex_buf: [64]u8 = undefined;
-    const hash_hex = try std.fmt.bufPrint(&hash_hex_buf, "{}", .{std.fmt.fmtSliceHexLower(&hash_out)});
+    // Query by plain session_token (not hashed)
+    const now = std.time.timestamp();
 
     var stmt = try a.db.prepare(
-        "SELECT u.id, u.telegram_id, u.first_name, u.last_name, u.username, u.is_admin FROM web_sessions ws JOIN users u ON u.id = ws.user_id WHERE ws.token_hash = ? AND ws.expires_at > ?",
+        "SELECT u.id, u.telegram_id, u.first_name, u.last_name, u.username, u.is_admin FROM web_sessions ws JOIN users u ON u.id = ws.user_id WHERE ws.session_token = ? AND ws.expires_at > ?",
     );
     defer stmt.deinit();
-    try stmt.bindText(1, hash_hex);
-    try stmt.bindInt(2, std.time.timestamp());
+    try stmt.bindText(1, token);
+    try stmt.bindInt(2, now);
 
     if (try stmt.step()) {
         return db_users.UserRecord{
