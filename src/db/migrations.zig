@@ -5,6 +5,13 @@ const migrations = [_]struct { version: i32, sql: []const u8 }{
     .{ .version = 1, .sql = @embedFile("../sql/001_initial.sql") },
     .{ .version = 2, .sql = @embedFile("../sql/002_indexes.sql") },
     .{ .version = 3, .sql = @embedFile("../sql/003_workflow.sql") },
+    .{ .version = 4, .sql = @embedFile("../sql/004_rich_text.sql") },
+    .{ .version = 5, .sql = @embedFile("../sql/005_audit_log.sql") },
+    .{ .version = 6, .sql = @embedFile("../sql/006_fts5_search.sql") },
+    .{ .version = 7, .sql = @embedFile("../sql/007_comments.sql") },
+    .{ .version = 8, .sql = @embedFile("../sql/008_git_like_versioning.sql") },
+    .{ .version = 9, .sql = @embedFile("../sql/009_project_updates.sql") },
+    .{ .version = 10, .sql = @embedFile("../sql/010_web_sessions.sql") },
 };
 
 pub fn run(db: *sqlite.Db) !void {
