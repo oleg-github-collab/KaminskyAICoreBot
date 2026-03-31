@@ -10,7 +10,7 @@ const sqlite = @import("../db/sqlite.zig");
 const storage = @import("../storage/filesystem.zig");
 const workflow = @import("workflow.zig");
 
-/// Build the main menu keyboard JSON
+/// Build the admin menu keyboard JSON (full functionality)
 fn mainMenuKeyboard(allocator: std.mem.Allocator, mini_app_url: []const u8) ![]const u8 {
     return tg_client.buildKeyboard(allocator, &.{
         &.{
@@ -18,10 +18,23 @@ fn mainMenuKeyboard(allocator: std.mem.Allocator, mini_app_url: []const u8) ![]c
             .{ .text = "➕ Новий проєкт", .callback_data = "menu:new_project" },
         },
         &.{
-            .{ .text = "💬 Написати нам", .callback_data = "menu:chat" },
+            .{ .text = "💬 Повідомлення", .callback_data = "menu:chat" },
             .{ .text = "📱 Застосунок", .web_app_url = mini_app_url },
         },
         &.{
+            .{ .text = "❓ Допомога", .callback_data = "menu:help" },
+        },
+    });
+}
+
+/// Build the user keyboard (simple — just app + chat)
+pub fn userAppKeyboard(allocator: std.mem.Allocator, mini_app_url: []const u8) ![]const u8 {
+    return tg_client.buildKeyboard(allocator, &.{
+        &.{
+            .{ .text = "📱 Відкрити застосунок", .web_app_url = mini_app_url },
+        },
+        &.{
+            .{ .text = "💬 Написати спеціалісту", .callback_data = "menu:chat" },
             .{ .text = "❓ Допомога", .callback_data = "menu:help" },
         },
     });
@@ -99,17 +112,24 @@ pub fn handleStart(
         }
     }
 
-    // Set state to idle
     try flow.setUserState(db, user.id, .idle, null);
 
-    // Send welcome
-    const kb = try mainMenuKeyboard(allocator, mini_app_url);
-    defer allocator.free(kb);
-    const resp = try tg.sendMessage(msg.chat.id, msgs.welcome, kb);
-    allocator.free(resp);
+    const is_admin = msg.chat.id == admin_chat_id;
 
-    // Notify admin about new user (if not admin themselves)
-    if (msg.chat.id != admin_chat_id) {
+    if (is_admin) {
+        // Admin gets full bot menu
+        const kb = try mainMenuKeyboard(allocator, mini_app_url);
+        defer allocator.free(kb);
+        const resp = try tg.sendMessage(msg.chat.id, msgs.welcome, kb);
+        allocator.free(resp);
+    } else {
+        // Users get simple welcome + app button
+        const kb = try userAppKeyboard(allocator, mini_app_url);
+        defer allocator.free(kb);
+        const resp = try tg.sendMessage(msg.chat.id, msgs.welcome_user, kb);
+        allocator.free(resp);
+
+        // Notify admin about new user
         var notify_buf: [512]u8 = undefined;
         const notify = std.fmt.bufPrint(&notify_buf, "Новий користувач: <b>{s} {s}</b> (@{s})", .{
             user.first_name,
@@ -168,6 +188,37 @@ pub fn handleCallback(
     tg.answerCallbackQuery(cbq.id, null) catch {};
 
     const chat_id = if (cbq.message) |m| m.chat.id else cbq.from.id;
+    const is_admin = cbq.from.id == admin_chat_id;
+
+    // Non-admin users: only chat, help, and back are allowed in bot
+    if (!is_admin) {
+        if (std.mem.eql(u8, data, "menu:chat")) {
+            try flow.setUserState(db, user.id, .chatting, null);
+            const kb = try chatKeyboard(allocator);
+            defer allocator.free(kb);
+            const resp = try tg.sendMessage(chat_id, msgs.chat_mode_started, kb);
+            allocator.free(resp);
+        } else if (std.mem.eql(u8, data, "menu:help")) {
+            const kb = try userAppKeyboard(allocator, mini_app_url);
+            defer allocator.free(kb);
+            const resp = try tg.sendMessage(chat_id, msgs.help, kb);
+            allocator.free(resp);
+        } else if (std.mem.eql(u8, data, "menu:back")) {
+            try flow.setUserState(db, user.id, .idle, null);
+            const kb = try userAppKeyboard(allocator, mini_app_url);
+            defer allocator.free(kb);
+            const resp = try tg.sendMessage(chat_id, msgs.choose_action, kb);
+            allocator.free(resp);
+        } else {
+            const kb = try userAppKeyboard(allocator, mini_app_url);
+            defer allocator.free(kb);
+            const resp = try tg.sendMessage(chat_id, msgs.use_app, kb);
+            allocator.free(resp);
+        }
+        return;
+    }
+
+    // === Admin-only callbacks below ===
 
     if (std.mem.eql(u8, data, "menu:projects")) {
         try showProjectsList(allocator, db, tg, chat_id, user);

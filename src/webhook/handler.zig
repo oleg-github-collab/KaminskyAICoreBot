@@ -99,7 +99,30 @@ fn handleMessage(a: *App, msg: *const tg_types.Message) !void {
 
     // State-based routing
     const user_state = try flow.getUserState(&a.db, user.id);
+    const is_admin = msg.chat.id == a.config.admin_chat_id;
 
+    // Non-admin users: simplified routing — chat relay or redirect to app
+    if (!is_admin) {
+        if (user_state.state == .chatting) {
+            try relay.handleClientMessage(
+                a.allocator, &a.db, &a.tg,
+                a.config.admin_chat_id, msg, &user, user_state.project_id,
+            );
+        } else if (tg_types.fileId(msg) != null) {
+            const kb = try commands.userAppKeyboard(a.allocator, a.config.mini_app_url);
+            defer a.allocator.free(kb);
+            const resp = try a.tg.sendMessage(msg.chat.id, msgs.use_app_for_files, kb);
+            a.allocator.free(resp);
+        } else if (msg.text != null) {
+            try relay.handleClientMessage(
+                a.allocator, &a.db, &a.tg,
+                a.config.admin_chat_id, msg, &user, null,
+            );
+        }
+        return;
+    }
+
+    // === Admin-only state routing below ===
     switch (user_state.state) {
         .creating_project => {
             if (msg.text) |text| {
@@ -134,13 +157,11 @@ fn handleMessage(a: *App, msg: *const tg_types.Message) !void {
         .project_menu => {
             if (tg_types.fileId(msg) != null) {
                 if (user_state.project_id) |pid| {
-                    // Auto-start source file upload
                     try flow.setUserState(&a.db, user.id, .uploading_source, pid);
                     try files_mod.handleFileMessage(
                         a.allocator, &a.db, &a.tg, msg, &user,
                         pid, "source", a.config.data_dir, a.config.admin_chat_id,
                     );
-                    // Show upload keyboard for continuing
                     const kb = try commands.uploadKeyboard(a.allocator);
                     defer a.allocator.free(kb);
                     const info_resp = try a.tg.sendMessage(

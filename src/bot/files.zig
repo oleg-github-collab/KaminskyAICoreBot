@@ -157,7 +157,16 @@ pub fn handleFileMessage(
 
     if (price_cents > 0) {
         const price_str = pricing.formatEuro(&euro_buf, price_cents);
-        if (char_count > 0) {
+        if (char_count > 0 and page_count > 0) {
+            // PDF/docs: show both pages and characters
+            resp_text = std.fmt.bufPrint(&resp_buf,
+                \\<b>{s}</b>
+                \\Розмір: {s} | Сторінок: {d} | Символів: {d}
+                \\Вартість: €{s}
+                \\
+                \\Продовжуйте надсилати або натисніть «Завершити».
+            , .{ original_name, size_str, page_count, char_count, price_str }) catch resp_text;
+        } else if (char_count > 0) {
             resp_text = std.fmt.bufPrint(&resp_buf,
                 \\<b>{s}</b>
                 \\Розмір: {s} | Символів: {d}
