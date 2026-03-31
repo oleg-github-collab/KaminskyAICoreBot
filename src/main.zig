@@ -257,7 +257,7 @@ fn serveHistoryJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.header("Content-Type", "application/javascript; charset=utf-8");
     res.body = @embedFile("web/lib/history.js");
 }
-fn serveLogin(_: *httpz.Request, res: *httpz.Response) !void {
+fn serveLogin(req: *httpz.Request, res: *httpz.Response) !void {
     const a = handler.app();
     const html_template = @embedFile("web/login.html");
 
@@ -265,12 +265,12 @@ fn serveLogin(_: *httpz.Request, res: *httpz.Response) !void {
     const placeholder = "{{BOT_USERNAME}}";
     const replacement = a.config.bot_username;
 
-    // Find and replace
+    // Find and replace - use httpz arena allocator so it persists until response is sent
     if (std.mem.indexOf(u8, html_template, placeholder)) |pos| {
         const before = html_template[0..pos];
         const after = html_template[pos + placeholder.len ..];
-        const html = try std.fmt.allocPrint(a.allocator, "{s}{s}{s}", .{ before, replacement, after });
-        defer a.allocator.free(html);
+        const html = try std.fmt.allocPrint(req.arena, "{s}{s}{s}", .{ before, replacement, after });
+        // No defer - httpz will free the arena after sending response
 
         res.status = 200;
         res.header("Content-Type", "text/html; charset=utf-8");
