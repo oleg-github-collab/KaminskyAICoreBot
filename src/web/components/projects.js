@@ -25,24 +25,24 @@ const ProjectsView = {
                     </div>`;
             } else {
                 html += projects.map(p => `
-                    <div class="card" style="cursor:pointer" onclick='ProjectsView.select(${JSON.stringify(p).replace(/'/g, "\\'")})'>
-                        <div style="display:flex;justify-content:space-between;align-items:flex-start">
-                            <div style="flex:1">
+                    <div class="card project-card" style="cursor:pointer" onclick='ProjectsView.select(${JSON.stringify(p).replace(/'/g, "\\'")})'>
+                        <div style="display:flex;justify-content:space-between;align-items:center">
+                            <div style="flex:1;min-width:0">
                                 <div class="card-title">${App.esc(p.name)}</div>
                                 <div class="card-sub" style="margin-top:4px">${App.esc(p.description || (p.source_lang && p.target_lang ? p.source_lang + ' \u2192 ' + p.target_lang : ''))}</div>
                             </div>
-                            <div style="display:flex;gap:6px;flex-shrink:0;margin-left:8px;align-items:center">
+                            <div style="display:flex;gap:6px;flex-shrink:0;margin-left:12px;align-items:center">
                                 <span class="card-badge">${App.esc(p.role)}</span>
                                 ${p.role === 'owner' ? `
-                                    <button class="btn btn-secondary btn-icon"
+                                    <button class="btn btn-sm btn-secondary project-action-btn"
                                             onclick="event.stopPropagation(); ProjectsView.editProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}', '${App.esc(p.description || '').replace(/'/g, "\\'")}')"
                                             data-tooltip="Редагувати">
-                                        ✏️
+                                        Ред.
                                     </button>
-                                    <button class="btn btn-danger btn-icon"
+                                    <button class="btn btn-sm btn-danger project-action-btn"
                                             onclick="event.stopPropagation(); ProjectsView.deleteProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}')"
                                             data-tooltip="Видалити">
-                                        🗑️
+                                        Вид.
                                     </button>
                                 ` : ''}
                             </div>

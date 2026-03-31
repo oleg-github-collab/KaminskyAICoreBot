@@ -194,6 +194,4 @@ const API = {
     getCommitPreview(pid) { return this.req('GET', '/projects/' + pid + '/commit-preview'); },
     createCommit(pid, message) { return this.req('POST', '/projects/' + pid + '/commits', { message }); },
 
-    // Project CRUD
-    updateProject(pid, data) { return this.req('PUT', '/projects/' + pid, data); },
 };

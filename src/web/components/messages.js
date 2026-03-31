@@ -26,9 +26,9 @@ const MessagesView = {
                     </div>
                 </div>
                 <div class="chat-input-area" style="flex-direction:column;align-items:stretch">
-                    <div id="quill-editor" style="min-height:60px;background:var(--bg-secondary);border-radius:6px;margin-bottom:8px"></div>
-                    <button class="btn btn-primary btn-send" id="send-btn" style="width:auto;min-width:120px;align-self:flex-end" onclick="MessagesView.send(${project.id})">
-                        <span class="btn-text">Відправити</span>
+                    <div id="quill-editor" style="min-height:60px;background:var(--bg2);border-radius:8px;margin-bottom:8px"></div>
+                    <button class="btn btn-primary btn-send" id="send-btn" onclick="MessagesView.send(${project.id})">
+                        <span class="btn-text">Надіслати</span>
                         <span class="btn-spinner" style="display:none">
                             <span class="spinner"></span>
                         </span>
@@ -226,7 +226,7 @@ const MessagesView = {
         this.quill.enable(false);
 
         try {
-            const result = await API.sendMessage(pid, { content: html, format: 'html' });
+            const result = await API.sendMessage(pid, html);
             if (result.uuid) this.seenUuids.add(result.uuid);
 
             const list = document.getElementById('messages-list');

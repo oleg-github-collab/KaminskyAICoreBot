@@ -138,18 +138,24 @@ body {
     box-shadow: 0 2px 8px rgba(36,129,204,.3);
 }
 
-/* Mobile improvements */
+/* Mobile nav: compact, scrollable */
 @media (max-width: 767px) {
     #nav {
-        gap: 8px;
-        padding-bottom: 12px;
+        gap: 6px;
+        padding: 8px 0 12px;
+        -webkit-overflow-scrolling: touch;
     }
 
     .nav-btn {
-        padding: 12px 18px;
-        font-size: 15px;
-        border-radius: 14px;
-        min-height: 48px; /* Better for thumbs */
+        padding: 8px 14px;
+        font-size: 13px;
+        border-radius: 10px;
+        min-height: 40px;
+        gap: 4px;
+    }
+
+    .nav-btn.active {
+        box-shadow: 0 2px 6px rgba(36,129,204,.25);
     }
 }
 #content { padding: 12px 16px 24px; }
@@ -168,7 +174,26 @@ body {
 .card-badge {
     display: inline-block; padding: 2px 10px; border-radius: 10px;
     font-size: 11px; font-weight: 700; background: var(--btn); color: var(--btn-text);
-    letter-spacing: .02em;
+    letter-spacing: .02em; white-space: nowrap;
+}
+
+/* Project action buttons — compact and clean */
+.project-action-btn {
+    padding: 4px 10px !important;
+    font-size: 12px !important;
+    font-weight: 600;
+    border-radius: 8px;
+    min-height: 32px;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+    .project-action-btn {
+        padding: 6px 12px !important;
+        font-size: 13px !important;
+        min-height: 36px;
+    }
 }
 
 /* Buttons */
@@ -643,14 +668,48 @@ select.input { appearance: auto; }
 .chat-text { word-break: break-word; }
 .chat-time { font-size: 10px; margin-top: 4px; opacity: .5; text-align: right; }
 .chat-input-area {
-    display: flex; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+    display: flex; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border);
     align-items: flex-end;
 }
 .chat-input-area .input { border-radius: 20px; padding: 10px 16px; }
 
-/* Send button loading state */
+/* Quill editor in chat */
+#quill-editor {
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+#quill-editor .ql-toolbar {
+    border: none;
+    border-bottom: 1px solid var(--border);
+    padding: 6px 8px;
+}
+#quill-editor .ql-container {
+    border: none;
+    font-size: 14px;
+}
+#quill-editor .ql-editor {
+    min-height: 50px;
+    max-height: 150px;
+    padding: 10px 12px;
+    overflow-y: auto;
+}
+#quill-editor .ql-editor.ql-blank::before {
+    font-style: normal;
+    color: var(--hint);
+}
+
+/* Send button — fixed width, aligned right */
 .btn-send {
     position: relative;
+    width: auto !important;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    align-self: flex-end;
+    padding: 10px 24px;
+    min-width: 120px;
 }
 
 .spinner {

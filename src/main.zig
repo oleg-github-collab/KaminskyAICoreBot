@@ -178,8 +178,6 @@ pub fn main() !void {
     router.get("/api/projects/:project_id/pricing", miniapp_api.handlePricing, .{});
     router.get("/api/projects/:project_id/invoices", miniapp_api.handleListInvoices, .{});
     router.post("/api/projects/:project_id/invoices", miniapp_api.handleCreateInvoice, .{});
-    router.put("/api/projects/:project_id", miniapp_api.handleUpdateProject, .{});
-    router.delete("/api/projects/:project_id", miniapp_api.handleDeleteProject, .{});
     router.get("/api/projects/:project_id/glossary/versions", miniapp_api.handleListGlossaryVersions, .{});
     router.get("/api/projects/:project_id/glossary/versions/:version_id", miniapp_api.handleGetGlossaryVersion, .{});
     router.get("/api/projects/:project_id/glossary/diff", miniapp_api.handleGlossaryDiff, .{});
