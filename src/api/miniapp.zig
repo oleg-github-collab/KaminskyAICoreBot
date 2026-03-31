@@ -1977,12 +1977,6 @@ pub fn handleCreateSession(req: *httpz.Request, res: *httpz.Response) !void {
     var token_buf: [64]u8 = undefined;
     const token = try std.fmt.bufPrint(&token_buf, "{}", .{std.fmt.fmtSliceHexLower(&token_bytes)});
 
-    // Hash token for storage
-    var hash: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(token, &hash, .{});
-    var hash_hex_buf: [64]u8 = undefined;
-    const hash_hex = try std.fmt.bufPrint(&hash_hex_buf, "{}", .{std.fmt.fmtSliceHexLower(&hash)});
-
     const now = std.time.timestamp();
     const expires = now + 30 * 24 * 60 * 60; // 30 days
 
