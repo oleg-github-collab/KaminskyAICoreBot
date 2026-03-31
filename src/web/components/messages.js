@@ -14,11 +14,19 @@ const MessagesView = {
             <div class="chat-container">
                 <div class="chat-header">
                     <h2 style="font-size:16px;margin:0">${App.esc(project.name)} — Чат</h2>
+                    <div id="connection-status" style="font-size:11px;color:var(--hint);margin-top:2px"></div>
                 </div>
                 <div id="messages-list" class="chat-messages"><div class="loading">Завантаження...</div></div>
+                <div id="typing-indicator" style="display:none">
+                    <div class="typing-indicator">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                </div>
                 <div class="chat-input-area">
                     <input id="msg-input" class="input" placeholder="Напишіть повідомлення..." style="flex:1"
-                        onkeydown="if(event.key==='Enter')MessagesView.send(${project.id})">
+                        onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();MessagesView.send(${project.id})}">
                     <button class="btn btn-primary" style="width:auto;padding:8px 16px" onclick="MessagesView.send(${project.id})">➤</button>
                 </div>
             </div>`;
@@ -49,7 +57,7 @@ const MessagesView = {
         const name = m.sender_name || '';
         const readMark = m.is_read ? ' ✓✓' : ' ✓';
         return `
-            <div class="chat-bubble ${isOut ? 'chat-bubble-out' : 'chat-bubble-in'}">
+            <div class="chat-bubble ${isOut ? 'chat-bubble-out' : 'chat-bubble-in'}" data-uuid="${App.esc(m.message_uuid || '')}">
                 ${!isOut && name ? `<div class="chat-sender">${App.esc(name)}</div>` : ''}
                 <div class="chat-text">${App.esc(m.content || '[медіа]')}</div>
                 <div class="chat-time">${App.fmtDate(m.created_at)}${isOut ? readMark : ''}</div>
@@ -58,36 +66,96 @@ const MessagesView = {
 
     connectSSE(pid) {
         this.disconnect();
-        const url = `/api/projects/${pid}/messages/stream`;
-        // SSE with auth via query or polling
-        this.pollInterval = setInterval(() => this.pollNewEvents(pid), 3000);
+        const status = document.getElementById('connection-status');
+        if (status) status.textContent = '🟡 Підключення...';
+
+        try {
+            this.eventSource = API.connectMessageStream(pid,
+                (data) => this.handleSSEMessage(data),
+                () => this.handleSSEError()
+            );
+            setTimeout(() => {
+                if (status && this.eventSource && this.eventSource.readyState === EventSource.OPEN) {
+                    status.textContent = '🟢 Підключено';
+                    setTimeout(() => { if (status) status.textContent = ''; }, 2000);
+                }
+            }, 500);
+        } catch (e) {
+            console.error('SSE connection failed:', e);
+            if (status) status.textContent = '🔴 Помилка підключення';
+        }
     },
 
-    async pollNewEvents(pid) {
-        if (this.currentPid !== pid) return;
-        try {
-            const data = await API.getMessages(pid);
-            const messages = data.messages || [];
+    handleSSEMessage(data) {
+        if (data.type === 'message' && data.message) {
+            const m = data.message;
+            if (m.message_uuid && this.seenUuids.has(m.message_uuid)) return;
+            if (m.message_uuid) this.seenUuids.add(m.message_uuid);
+
             const list = document.getElementById('messages-list');
             if (!list) return;
 
-            let hasNew = false;
-            messages.forEach(m => {
-                if (m.message_uuid && !this.seenUuids.has(m.message_uuid)) {
-                    this.seenUuids.add(m.message_uuid);
-                    hasNew = true;
-                }
-            });
-            if (hasNew) {
-                list.innerHTML = messages.map(m => this.renderBubble(m)).join('');
-                list.scrollTop = list.scrollHeight;
+            const empty = list.querySelector('.empty');
+            if (empty) empty.remove();
+
+            const div = document.createElement('div');
+            div.innerHTML = this.renderBubble(m);
+            list.appendChild(div.firstElementChild);
+            list.scrollTop = list.scrollHeight;
+
+            // Hide typing indicator if message arrived
+            this.hideTyping();
+
+            // Play subtle notification if from admin
+            if (m.direction === 'from_admin' && typeof App.tg !== 'undefined' && App.tg.HapticFeedback) {
+                App.tg.HapticFeedback.notificationOccurred('success');
             }
-        } catch (e) { /* silent */ }
+        } else if (data.type === 'typing') {
+            this.showTyping();
+        } else if (data.type === 'read_receipt') {
+            // Update read markers
+            const list = document.getElementById('messages-list');
+            if (!list || !data.message_uuid) return;
+            const bubble = list.querySelector(`[data-uuid="${data.message_uuid}"]`);
+            if (bubble) {
+                const timeEl = bubble.querySelector('.chat-time');
+                if (timeEl && !timeEl.textContent.includes('✓✓')) {
+                    timeEl.textContent = timeEl.textContent.replace(' ✓', ' ✓✓');
+                }
+            }
+        }
+    },
+
+    handleSSEError() {
+        const status = document.getElementById('connection-status');
+        if (status) status.textContent = '🔴 Підключення втрачено';
+        // Attempt reconnect after 3s
+        setTimeout(() => {
+            if (this.currentPid) this.connectSSE(this.currentPid);
+        }, 3000);
+    },
+
+    showTyping() {
+        const indicator = document.getElementById('typing-indicator');
+        if (indicator) {
+            indicator.style.display = 'block';
+            clearTimeout(this.typingTimeout);
+            this.typingTimeout = setTimeout(() => this.hideTyping(), 3000);
+        }
+    },
+
+    hideTyping() {
+        const indicator = document.getElementById('typing-indicator');
+        if (indicator) indicator.style.display = 'none';
+        clearTimeout(this.typingTimeout);
     },
 
     disconnect() {
-        if (this.eventSource) { this.eventSource.close(); this.eventSource = null; }
-        if (this.pollInterval) { clearInterval(this.pollInterval); this.pollInterval = null; }
+        if (this.eventSource) {
+            this.eventSource.close();
+            this.eventSource = null;
+        }
+        this.hideTyping();
         this.seenUuids.clear();
         this.currentPid = null;
     },
@@ -104,10 +172,8 @@ const MessagesView = {
             const result = await API.sendMessage(pid, content);
             if (result.uuid) this.seenUuids.add(result.uuid);
 
-            // Append immediately
             const list = document.getElementById('messages-list');
             if (list) {
-                // Remove empty state
                 const empty = list.querySelector('.empty');
                 if (empty) empty.remove();
 
@@ -117,12 +183,13 @@ const MessagesView = {
                     content: content,
                     created_at: Math.floor(Date.now() / 1000),
                     message_uuid: result.uuid,
+                    is_read: false
                 });
                 list.appendChild(div.firstElementChild);
                 list.scrollTop = list.scrollHeight;
             }
         } catch (e) {
-            App.alert(e.message);
+            App.toast(e.message, 'error');
             input.value = content;
         }
         input.disabled = false;

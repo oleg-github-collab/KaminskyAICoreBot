@@ -125,6 +125,7 @@ pub fn main() !void {
     router.get("/api/projects/:project_id/glossary", miniapp_api.handleListGlossary, .{});
     router.post("/api/projects/:project_id/glossary/approve", miniapp_api.handleApproveGlossary, .{});
     router.post("/api/projects/:project_id/glossary/reject", miniapp_api.handleRejectGlossary, .{});
+    router.post("/api/projects/:project_id/glossary/terms/:term_id", miniapp_api.handleUpdateGlossaryTerm, .{});
     router.get("/api/projects/:project_id/glossary/export", miniapp_api.handleExportGlossary, .{});
     router.post("/api/projects/:project_id/glossary/sync", miniapp_api.handleSyncDeepL, .{});
     router.get("/api/projects/:project_id/messages", miniapp_api.handleMessages, .{});

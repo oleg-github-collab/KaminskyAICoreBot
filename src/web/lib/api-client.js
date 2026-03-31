@@ -24,11 +24,13 @@ const API = {
         return r.json();
     },
 
+    // Projects
     getProjects() { return this.req('GET', '/projects'); },
     createProject(name, desc) { return this.req('POST', '/projects', { name, description: desc }); },
     getProject(id) { return this.req('GET', '/projects/' + id); },
     deleteProject(id) { return this.req('DELETE', '/projects/' + id); },
 
+    // Files
     getFiles(pid, cat) {
         const q = cat ? '?category=' + cat : '';
         return this.req('GET', '/projects/' + pid + '/files' + q);
@@ -65,31 +67,59 @@ const API = {
         return results;
     },
 
+    // Team
     getTeam(pid) { return this.req('GET', '/projects/' + pid + '/team'); },
     createInvite(pid) { return this.req('POST', '/projects/' + pid + '/team/invite'); },
     removeMember(pid, mid) { return this.req('DELETE', '/projects/' + pid + '/team/' + mid); },
 
+    // Glossary
     getGlossary(pid) { return this.req('GET', '/projects/' + pid + '/glossary'); },
     approveTerms(pid, termIds) { return this.req('POST', '/projects/' + pid + '/glossary/approve', { term_ids: termIds }); },
     rejectTerms(pid, termIds) { return this.req('POST', '/projects/' + pid + '/glossary/reject', { term_ids: termIds }); },
+    updateTerm(pid, termId, data) { return this.req('POST', '/projects/' + pid + '/glossary/terms/' + termId, data); },
     exportGlossary(pid, format) { return this.req('GET', '/projects/' + pid + '/glossary/export?format=' + (format || 'tsv')); },
     syncGlossary(pid) { return this.req('POST', '/projects/' + pid + '/glossary/sync'); },
 
+    // Glossary versions
     getGlossaryVersions(pid) { return this.req('GET', '/projects/' + pid + '/glossary/versions'); },
     getGlossaryVersion(pid, vid) { return this.req('GET', '/projects/' + pid + '/glossary/versions/' + vid); },
     getGlossaryDiff(pid, a, b) { return this.req('GET', '/projects/' + pid + '/glossary/diff?a=' + a + '&b=' + b); },
 
+    // Messages
     getMessages(pid) { return this.req('GET', '/projects/' + pid + '/messages'); },
     sendMessage(pid, content) { return this.req('POST', '/projects/' + pid + '/messages', { content }); },
 
+    // SSE stream helper
+    connectMessageStream(pid, onMessage, onError) {
+        const url = this.base + '/projects/' + pid + '/messages/stream';
+        const auth = this.initData();
+        const separator = url.includes('?') ? '&' : '?';
+        const fullUrl = url + separator + 'auth=' + encodeURIComponent(auth);
+        const es = new EventSource(fullUrl);
+        es.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (onMessage) onMessage(data);
+            } catch (e) { /* ignore parse errors */ }
+        };
+        es.onerror = function() {
+            if (onError) onError();
+        };
+        return es;
+    },
+
+    // Pricing
     getPricing(pid) { return this.req('GET', '/projects/' + pid + '/pricing'); },
     createInvoice(pid) { return this.req('POST', '/projects/' + pid + '/invoices'); },
     getInvoices(pid) { return this.req('GET', '/projects/' + pid + '/invoices'); },
 
+    // Settings
     getSettings(pid) { return this.req('GET', '/projects/' + pid + '/settings'); },
     updateSettings(pid, settings) { return this.req('POST', '/projects/' + pid + '/settings', settings); },
 
+    // Workflow
     getWorkflow(pid) { return this.req('GET', '/projects/' + pid + '/workflow'); },
 
+    // Auth
     createSession() { return this.req('POST', '/auth/session'); },
 };

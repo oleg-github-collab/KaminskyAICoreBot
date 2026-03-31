@@ -14,14 +14,19 @@ const App = {
                 this.tg.initDataUnsafe.user.id && this.tg.initDataUnsafe.start_param === 'admin');
         }
 
-        // Desktop detection
         this.isDesktop = typeof Auth !== 'undefined' && Auth.isDesktop();
         if (this.isDesktop) {
             document.body.classList.add('desktop');
-            // Auto-create session if we have TMA auth
             if (this.tg && this.tg.initData && !Auth.getToken()) {
                 Auth.createSession();
             }
+        }
+
+        // Create toast container
+        if (!document.querySelector('.toast-container')) {
+            const tc = document.createElement('div');
+            tc.className = 'toast-container';
+            document.body.appendChild(tc);
         }
 
         this.buildNav();
@@ -75,14 +80,47 @@ const App = {
         this.navigate('projects');
     },
 
+    // Toast notification system
+    toast(message, type) {
+        type = type || 'info';
+        const container = document.querySelector('.toast-container');
+        if (!container) return;
+        const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️' };
+        const el = document.createElement('div');
+        el.className = 'toast toast-' + type;
+        el.innerHTML = '<span>' + (icons[type] || '') + '</span><span>' + this.esc(message) + '</span>';
+        container.appendChild(el);
+        setTimeout(() => {
+            el.classList.add('removing');
+            setTimeout(() => el.remove(), 250);
+        }, 3500);
+    },
+
+    // Modal confirmation
+    modalConfirm(title, message, onConfirm, confirmLabel, cancelLabel) {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal">
+                <h3>${this.esc(title)}</h3>
+                <p>${this.esc(message)}</p>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" data-action="cancel">${this.esc(cancelLabel || 'Скасувати')}</button>
+                    <button class="btn btn-primary" data-action="confirm">${this.esc(confirmLabel || 'Підтвердити')}</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        overlay.querySelector('[data-action="cancel"]').onclick = () => overlay.remove();
+        overlay.querySelector('[data-action="confirm"]').onclick = () => { overlay.remove(); if (onConfirm) onConfirm(); };
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    },
+
     alert(msg) {
-        if (this.tg && this.tg.showAlert) this.tg.showAlert(msg);
-        else alert(msg);
+        this.toast(msg, 'info');
     },
 
     confirm(msg, cb) {
-        if (this.tg && this.tg.showConfirm) this.tg.showConfirm(msg, cb);
-        else cb(confirm(msg));
+        this.modalConfirm('Підтвердження', msg, () => cb(true), 'Так', 'Ні');
     },
 
     esc(str) {
@@ -108,6 +146,17 @@ const App = {
         if (bytes < 1024) return bytes + ' B';
         if (bytes < 1048576) return Math.round(bytes / 1024) + ' KB';
         return (bytes / 1048576).toFixed(1) + ' MB';
+    },
+
+    // Skeleton loading placeholder
+    skeleton(lines) {
+        lines = lines || 3;
+        let html = '';
+        for (let i = 0; i < lines; i++) {
+            const w = i === lines - 1 ? 'width:60%' : '';
+            html += '<div class="skeleton skeleton-line" style="' + w + '"></div>';
+        }
+        return html;
     }
 };
 

@@ -1102,6 +1102,74 @@ pub fn handleRejectGlossary(req: *httpz.Request, res: *httpz.Response) !void {
     try res.json(.{ .ok = true, .deleted = payload.term_ids.len }, .{});
 }
 
+pub fn handleUpdateGlossaryTerm(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    const term_id_str = req.param("term_id") orelse {
+        jsonError(res, 400, "Не вказано term_id.");
+        return;
+    };
+    const term_id = std.fmt.parseInt(i64, term_id_str, 10) catch {
+        jsonError(res, 400, "Невірний формат term_id.");
+        return;
+    };
+
+    const Body = struct {
+        target_term: ?[]const u8 = null,
+        domain: ?[]const u8 = null,
+    };
+
+    const payload = (try req.json(Body)) orelse {
+        jsonError(res, 400, "Потрібен JSON з target_term або domain.");
+        return;
+    };
+
+    if (payload.target_term == null and payload.domain == null) {
+        jsonError(res, 400, "Вкажіть target_term або domain для оновлення.");
+        return;
+    }
+
+    // Check term exists in project
+    var check_stmt = try a.db.prepare(
+        "SELECT id FROM glossary_terms WHERE id = ? AND project_id = ?",
+    );
+    defer check_stmt.deinit();
+    try check_stmt.bindInt(1, term_id);
+    try check_stmt.bindInt(2, access.project_id);
+    const exists = try check_stmt.step();
+    if (!exists) {
+        jsonError(res, 404, "Термін не знайдено.");
+        return;
+    }
+
+    // Update term
+    if (payload.target_term) |target| {
+        var update_stmt = try a.db.prepare(
+            "UPDATE glossary_terms SET target_term = ? WHERE id = ? AND project_id = ?",
+        );
+        defer update_stmt.deinit();
+        try update_stmt.bindText(1, target);
+        try update_stmt.bindInt(2, term_id);
+        try update_stmt.bindInt(3, access.project_id);
+        try update_stmt.exec();
+    }
+
+    if (payload.domain) |domain| {
+        var update_stmt = try a.db.prepare(
+            "UPDATE glossary_terms SET domain = ? WHERE id = ? AND project_id = ?",
+        );
+        defer update_stmt.deinit();
+        try update_stmt.bindText(1, domain);
+        try update_stmt.bindInt(2, term_id);
+        try update_stmt.bindInt(3, access.project_id);
+        try update_stmt.exec();
+    }
+
+    try res.json(.{ .ok = true, .term_id = term_id }, .{});
+}
+
 pub fn handleExportGlossary(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const access = parseProjectAccess(req, res, user) orelse return;
