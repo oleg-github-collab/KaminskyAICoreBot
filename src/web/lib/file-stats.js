@@ -279,7 +279,7 @@ window.FileStatsInstance = new FileStats();
 
 // Add CSS
 const fileStatsStyle = document.createElement('style');
-style.textContent = `
+fileStatsStyle.textContent = `
     .file-stats-panel {
         background: var(--bg);
         border: 1px solid var(--border);

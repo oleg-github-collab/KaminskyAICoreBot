@@ -238,7 +238,7 @@ window.DiffViewerInstance = new DiffViewer();
 
 // Add CSS
 const diffViewerStyle = document.createElement('style');
-style.textContent = `
+diffViewerStyle.textContent = `
     .modal-overlay-large .diff-viewer-container {
         width: 90vw;
         max-width: 1400px;

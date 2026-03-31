@@ -400,7 +400,7 @@ const InboxView = {
 
 // Add CSS
 const inboxStyle = document.createElement('style');
-style.textContent = `
+inboxStyle.textContent = `
     .inbox-container {
         max-width: 1200px;
         margin: 0 auto;
