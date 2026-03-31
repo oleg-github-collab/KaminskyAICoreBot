@@ -215,10 +215,10 @@ const App = {
         this.currentProject = project;
 
         // Map API role to RBAC role and update permissions
-        if (typeof RoleManager !== 'undefined') {
-            const roleMap = { 'owner': 'owner', 'admin': 'admin', 'member': 'client' };
-            const rbacRole = roleMap[project.role] || 'client';
-            RoleManager.setUser(null, rbacRole);
+        // owner = full access, member = can upload/edit/comment (admin-level)
+        if (window.RoleManager && window.RoleManager.setUser) {
+            const roleMap = { 'owner': 'owner', 'admin': 'admin', 'member': 'admin' };
+            window.RoleManager.setUser(null, roleMap[project.role] || 'admin');
         }
 
         this.navigate('files');
