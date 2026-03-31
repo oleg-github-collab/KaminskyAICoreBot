@@ -246,5 +246,7 @@ class RoleManager {
     }
 }
 
-// Global instance
+// Global exports
+window.ROLES = ROLES;
+window.PERMISSIONS = PERMISSIONS;
 window.RoleManager = new RoleManager();
