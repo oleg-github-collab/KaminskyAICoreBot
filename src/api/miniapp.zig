@@ -181,6 +181,26 @@ fn authenticateBearer(a: *handler.App, token: []const u8) !db_users.UserRecord {
     return AuthError.InvalidAuth;
 }
 
+/// Public authentication function for WebSocket and other modules
+pub fn authenticateToken(allocator: std.mem.Allocator, db: *sqlite.Db, auth: []const u8) !db_users.UserRecord {
+    _ = allocator;
+    const a = app();
+
+    // Try Bearer token first
+    if (std.mem.startsWith(u8, auth, "Bearer ")) {
+        const token = auth[7..];
+        return try authenticateBearer(a, token);
+    }
+
+    // Try Telegram Mini App initData
+    if (std.mem.startsWith(u8, auth, "tma ")) {
+        const init_data = auth[4..];
+        return try authenticateTMA(a, init_data);
+    }
+
+    return AuthError.InvalidAuth;
+}
+
 fn devUser() !db_users.UserRecord {
     const a = app();
     var user = try db_users.findOrCreate(a.allocator, &a.db, a.config.admin_chat_id, "Dev", null, "admin");
