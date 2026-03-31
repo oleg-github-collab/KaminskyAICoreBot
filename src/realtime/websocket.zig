@@ -101,27 +101,19 @@ const WebSocketContext = struct {
     user_id: i64,
 };
 
-// Handler wrapper required by httpz
+// WebSocket Handler - httpz expects Handler type directly
 const Handler = struct {
-    pub const WebsocketHandler = WebSocketHandler;
-
-    pub fn init(ws: *httpz.websocket.Conn, context: WebSocketContext) !WebSocketHandler {
-        return WebSocketHandler.init(ws, context);
-    }
-};
-
-const WebSocketHandler = struct {
     context: WebSocketContext,
     ws: *httpz.websocket.Conn,
 
-    pub fn init(ws: *httpz.websocket.Conn, context: WebSocketContext) !WebSocketHandler {
+    pub fn init(ws: *httpz.websocket.Conn, context: WebSocketContext) !Handler {
         return .{
             .context = context,
             .ws = ws,
         };
     }
 
-    pub fn handle(self: *WebSocketHandler, message: httpz.websocket.Message) !void {
+    pub fn handle(self: *Handler, message: httpz.websocket.Message) !void {
         const a = handler.app();
 
         switch (message) {
@@ -163,14 +155,14 @@ const WebSocketHandler = struct {
         }
     }
 
-    pub fn close(self: *WebSocketHandler) void {
+    pub fn close(self: *Handler) void {
         std.log.info("WebSocket handler cleanup: user={d}, project={d}", .{
             self.context.user_id,
             self.context.project_id,
         });
     }
 
-    fn broadcastTyping(self: *WebSocketHandler) !void {
+    fn broadcastTyping(self: *Handler) !void {
         const a = handler.app();
 
         if (a.redis == null) {
