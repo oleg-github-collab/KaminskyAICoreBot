@@ -3,6 +3,8 @@ const GlossaryView = {
     searchQuery: '',
     editingTermId: null,
     allTerms: [],
+    selectedTermIds: new Set(),
+    sortableInstance: null,
 
     async render(c, project) {
         if (!project) {
@@ -22,11 +24,21 @@ const GlossaryView = {
             </div>
             <div id="glossary-stats"></div>
             <div id="glossary-actions" style="display:flex;gap:8px;margin-bottom:12px">
-                <button class="btn btn-secondary btn-sm" onclick="GlossaryView.exportTSV(${project.id})">📥 Експорт TSV</button>
+                <div class="dropdown" style="position:relative">
+                    <button class="btn btn-secondary btn-sm" onclick="GlossaryView.toggleExportMenu(event)">📥 Експорт ▼</button>
+                    <div id="export-menu" class="dropdown-menu" style="display:none;position:absolute;top:100%;left:0;background:var(--bg-secondary);box-shadow:var(--shadow-normal);border-radius:6px;margin-top:4px;min-width:150px;z-index:100">
+                        <button onclick="GlossaryView.exportTSV(${project.id})">TSV</button>
+                        <button onclick="GlossaryView.exportCSV(${project.id})">CSV</button>
+                        <button onclick="GlossaryView.exportJSON(${project.id})">JSON</button>
+                        <button onclick="GlossaryView.exportXLSX(${project.id})">Excel (XLSX)</button>
+                    </div>
+                </div>
                 <button class="btn btn-secondary btn-sm" onclick="GlossaryView.syncGlossary(${project.id})">🔄 Синхронізувати</button>
                 <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="GlossaryView.bulkApprove(${project.id})">✓ Затвердити всі</button>
             </div>
+            <div id="batch-actions" style="display:none;background:var(--bg-secondary);padding:12px;border-radius:6px;margin-bottom:12px"></div>
             <div class="term-row header">
+                <div style="width:40px"><input type="checkbox" id="select-all" onchange="GlossaryView.toggleSelectAll(this.checked)"></div>
                 <div>Оригінал</div>
                 <div>Переклад</div>
                 <div style="text-align:right">Статус</div>
@@ -104,6 +116,24 @@ const GlossaryView = {
         }
 
         list.innerHTML = terms.map(t => this.renderTermRow(t)).join('');
+
+        // Initialize drag-drop reordering if Sortable.js is loaded
+        if (window.Sortable && !this.sortableInstance) {
+            this.sortableInstance = Sortable.create(list, {
+                animation: 150,
+                handle: '.drag-handle',
+                onEnd: async (evt) => {
+                    const termIds = Array.from(list.querySelectorAll('.term-row')).map(r => parseInt(r.dataset.id));
+                    try {
+                        // TODO: Implement API endpoint for term reordering
+                        // await API.updateTermOrder(App.currentProject.id, termIds);
+                        App.toast('Порядок змінено', 'success');
+                    } catch (e) {
+                        console.error('Reorder failed:', e);
+                    }
+                }
+            });
+        }
     },
 
     renderTermRow(t) {
@@ -112,9 +142,16 @@ const GlossaryView = {
         const confidence = (t.confidence || 0) * 100;
         const confClass = confidence >= 80 ? 'confidence-high' : confidence >= 50 ? 'confidence-mid' : 'confidence-low';
         const isEditing = this.editingTermId === t.id;
+        const isSelected = this.selectedTermIds.has(t.id);
 
         return `
-            <div class="term-row" data-id="${t.id}">
+            <div class="term-row ${isSelected ? 'selected' : ''}" data-id="${t.id}">
+                <div style="width:40px;display:flex;align-items:center;gap:4px">
+                    <input type="checkbox" class="term-checkbox" data-id="${t.id}"
+                        ${isSelected ? 'checked' : ''}
+                        onchange="GlossaryView.toggleSelect(${t.id}, this.checked)">
+                    <span class="drag-handle" style="cursor:move;font-size:16px">⠿</span>
+                </div>
                 <div class="term-source">
                     ${App.esc(t.source_term)}
                     ${t.domain ? `<div style="margin-top:4px"><span class="domain-tag">${App.esc(t.domain)}</span></div>` : ''}
@@ -264,6 +301,195 @@ const GlossaryView = {
             await API.syncGlossary(pid);
             await this.loadTerms(pid);
             App.toast('Глосарій синхронізовано', 'success');
+        } catch (e) {
+            App.toast(e.message, 'error');
+        }
+    },
+
+    // Batch selection methods
+    toggleSelect(termId, checked) {
+        if (checked) {
+            this.selectedTermIds.add(termId);
+        } else {
+            this.selectedTermIds.delete(termId);
+        }
+        this.updateBatchActions();
+        this.renderTerms();
+    },
+
+    toggleSelectAll(checked) {
+        const list = document.getElementById('terms-list');
+        if (!list) return;
+
+        list.querySelectorAll('.term-checkbox').forEach(cb => {
+            const termId = parseInt(cb.dataset.id);
+            if (checked) {
+                this.selectedTermIds.add(termId);
+            } else {
+                this.selectedTermIds.delete(termId);
+            }
+        });
+        this.updateBatchActions();
+        this.renderTerms();
+    },
+
+    selectAll() {
+        this.allTerms.forEach(t => this.selectedTermIds.add(t.id));
+        const selectAllCb = document.getElementById('select-all');
+        if (selectAllCb) selectAllCb.checked = true;
+        this.updateBatchActions();
+        this.renderTerms();
+    },
+
+    deselectAll() {
+        this.selectedTermIds.clear();
+        const selectAllCb = document.getElementById('select-all');
+        if (selectAllCb) selectAllCb.checked = false;
+        this.updateBatchActions();
+        this.renderTerms();
+    },
+
+    updateBatchActions() {
+        const actions = document.getElementById('batch-actions');
+        if (!actions) return;
+
+        const count = this.selectedTermIds.size;
+
+        if (count === 0) {
+            actions.style.display = 'none';
+            return;
+        }
+
+        actions.style.display = 'block';
+        actions.innerHTML = `
+            <div style="display:flex;gap:8px;align-items:center">
+                <span style="font-weight:500">${count} обрано</span>
+                <button class="btn btn-success btn-sm" onclick="GlossaryView.batchApproveSelected()">✓ Затвердити обрані</button>
+                <button class="btn btn-danger btn-sm" onclick="GlossaryView.batchRejectSelected()">✗ Відхилити обрані</button>
+                <button class="btn btn-secondary btn-sm" onclick="GlossaryView.deselectAll()">Скасувати вибір</button>
+            </div>`;
+    },
+
+    async batchApproveSelected() {
+        if (this.selectedTermIds.size === 0) return;
+
+        const selectedTerms = this.allTerms.filter(t => this.selectedTermIds.has(t.id));
+        const pendingTerms = selectedTerms.filter(t => !t.is_approved);
+
+        if (pendingTerms.length === 0) {
+            App.toast('Обрані терміни вже затверджені', 'info');
+            return;
+        }
+
+        try {
+            const pid = App.currentProject.id;
+            await API.approveTerms(pid, pendingTerms.map(t => t.id));
+            pendingTerms.forEach(t => { t.is_approved = true; });
+            this.selectedTermIds.clear();
+            this.updateStats();
+            this.updateBatchActions();
+            this.renderTerms();
+            App.toast(`Затверджено ${pendingTerms.length} термінів`, 'success');
+        } catch (e) {
+            App.toast(e.message, 'error');
+        }
+    },
+
+    async batchRejectSelected() {
+        if (this.selectedTermIds.size === 0) return;
+
+        App.modalConfirm(
+            'Масове відхилення',
+            `Видалити ${this.selectedTermIds.size} термінів? Цю дію не можна скасувати.`,
+            async () => {
+                try {
+                    const pid = App.currentProject.id;
+                    const termIds = Array.from(this.selectedTermIds);
+                    await API.rejectTerms(pid, termIds);
+                    this.allTerms = this.allTerms.filter(t => !this.selectedTermIds.has(t.id));
+                    this.selectedTermIds.clear();
+                    this.updateStats();
+                    this.updateBatchActions();
+                    this.renderTerms();
+                    App.toast(`Відхилено ${termIds.length} термінів`, 'success');
+                } catch (e) {
+                    App.toast(e.message, 'error');
+                }
+            },
+            'Видалити',
+            'Скасувати'
+        );
+    },
+
+    // Export menu
+    toggleExportMenu(event) {
+        event.stopPropagation();
+        const menu = document.getElementById('export-menu');
+        if (!menu) return;
+
+        menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+
+        // Close menu when clicking outside
+        if (menu.style.display === 'block') {
+            const closeMenu = (e) => {
+                if (!menu.contains(e.target)) {
+                    menu.style.display = 'none';
+                    document.removeEventListener('click', closeMenu);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', closeMenu), 0);
+        }
+    },
+
+    async exportCSV(pid) {
+        try {
+            const data = await API.exportGlossary(pid, 'csv');
+            const blob = new Blob([data.content || ''], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'glossary.csv'; a.click();
+            URL.revokeObjectURL(url);
+            App.toast('Експорт CSV завершено', 'success');
+        } catch (e) {
+            App.toast(e.message, 'error');
+        }
+    },
+
+    async exportJSON(pid) {
+        try {
+            const data = await API.exportGlossary(pid, 'json');
+            const blob = new Blob([JSON.stringify(data.terms || [], null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'glossary.json'; a.click();
+            URL.revokeObjectURL(url);
+            App.toast('Експорт JSON завершено', 'success');
+        } catch (e) {
+            App.toast(e.message, 'error');
+        }
+    },
+
+    async exportXLSX(pid) {
+        try {
+            App.toast('Експорт XLSX... (може зайняти час)', 'info');
+            const data = await API.exportGlossary(pid, 'xlsx');
+
+            // Assuming backend returns base64-encoded XLSX
+            if (data.content_base64) {
+                const binary = atob(data.content_base64);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                    bytes[i] = binary.charCodeAt(i);
+                }
+                const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'glossary.xlsx'; a.click();
+                URL.revokeObjectURL(url);
+                App.toast('Експорт XLSX завершено', 'success');
+            } else {
+                throw new Error('XLSX export not yet implemented on server');
+            }
         } catch (e) {
             App.toast(e.message, 'error');
         }

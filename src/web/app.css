@@ -397,6 +397,43 @@ select.input { appearance: auto; }
 .typing-dot:nth-child(3) { animation-delay: .3s; }
 @keyframes typingBounce { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
 
+/* Dropdown menu */
+.dropdown-menu {
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+}
+.dropdown-menu button {
+    background: none;
+    border: none;
+    padding: 8px 12px;
+    text-align: left;
+    cursor: pointer;
+    color: var(--text);
+    border-radius: 4px;
+    font-size: 14px;
+    transition: background 0.15s;
+}
+.dropdown-menu button:hover {
+    background: var(--bg);
+}
+
+/* Selected term row */
+.term-row.selected {
+    background: var(--link) !important;
+    color: white;
+}
+.term-row.selected .status-badge,
+.term-row.selected .domain-tag {
+    opacity: 0.9;
+}
+
+/* Sortable ghost */
+.sortable-ghost {
+    opacity: 0.4;
+    background: var(--hint);
+}
+
 /* ── Desktop overrides ── */
 body.desktop #nav { flex-wrap: wrap; }
 body.desktop #content { max-width: 960px; margin: 0 auto; }
