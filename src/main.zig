@@ -136,6 +136,12 @@ pub fn main() !void {
     router.get("/app/components/comments.js", serveCommentsJS, .{});
     router.get("/app/components/git-versioning.js", serveGitVersioningJS, .{});
     router.get("/app/lib/auth.js", serveAuthJS, .{});
+    router.get("/app/lib/roles.js", serveRolesJS, .{});
+    router.get("/app/lib/dragdrop.js", serveDragDropJS, .{});
+    router.get("/app/lib/diff-viewer.js", serveDiffViewerJS, .{});
+    router.get("/app/lib/file-stats.js", serveFileStatsJS, .{});
+    router.get("/app/components/inbox.js", serveInboxJS, .{});
+    router.get("/app/components/instructions.js", serveInstructionsJS, .{});
 
     // REST API for Mini App
     router.get("/api/health", handler.handleHealth, .{});
@@ -324,4 +330,34 @@ fn serveGitVersioningJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
     res.body = @embedFile("web/components/git-versioning.js");
+}
+fn serveRolesJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/lib/roles.js");
+}
+fn serveDragDropJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/lib/dragdrop.js");
+}
+fn serveDiffViewerJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/lib/diff-viewer.js");
+}
+fn serveFileStatsJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/lib/file-stats.js");
+}
+fn serveInboxJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/inbox.js");
+}
+fn serveInstructionsJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/instructions.js");
 }
