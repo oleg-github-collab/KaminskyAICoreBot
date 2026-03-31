@@ -118,6 +118,16 @@ pub fn isMember(db: *sqlite.Db, project_id: i64, user_id: i64) !bool {
     return try stmt.step();
 }
 
+pub fn isOwner(db: *sqlite.Db, project_id: i64, user_id: i64) !bool {
+    var stmt = try db.prepare(
+        "SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ? AND role = 'owner'",
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, project_id);
+    try stmt.bindInt(2, user_id);
+    return try stmt.step();
+}
+
 pub fn addMember(db: *sqlite.Db, project_id: i64, user_id: i64) !void {
     var stmt = try db.prepare(
         "INSERT OR IGNORE INTO project_members (project_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",
