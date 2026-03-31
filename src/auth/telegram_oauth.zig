@@ -138,9 +138,10 @@ fn verifyTelegramHash(allocator: std.mem.Allocator, bot_token: []const u8, req: 
 }
 
 fn createWebSession(a: *handler.App, user_id: i64, req: *httpz.Request) ![]const u8 {
-    // Ensure web_sessions table exists
+    // Recreate web_sessions table with correct schema (drop old if exists)
+    a.db.exec("DROP TABLE IF EXISTS web_sessions") catch {};
     a.db.exec(
-        \\CREATE TABLE IF NOT EXISTS web_sessions (
+        \\CREATE TABLE web_sessions (
         \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
         \\    user_id INTEGER NOT NULL REFERENCES users(id),
         \\    session_token TEXT NOT NULL UNIQUE,
@@ -151,6 +152,9 @@ fn createWebSession(a: *handler.App, user_id: i64, req: *httpz.Request) ![]const
         \\    last_used_at INTEGER NOT NULL
         \\)
     ) catch {};
+    a.db.exec("CREATE INDEX IF NOT EXISTS idx_web_sessions_token ON web_sessions(session_token)") catch {};
+    a.db.exec("CREATE INDEX IF NOT EXISTS idx_web_sessions_user ON web_sessions(user_id, expires_at DESC)") catch {};
+    a.db.exec("CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at)") catch {};
 
     // Generate random session token
     var token_bytes: [32]u8 = undefined;
