@@ -997,6 +997,7 @@ pub fn handleDeleteFile(req: *httpz.Request, res: *httpz.Response) !void {
 }
 
 /// GET /api/projects/:project_id/files/:file_id/content — Get file content for quoting
+/// Ultra-reliable: tries DB cache → reads raw file from disk → extracts text on-the-fly
 pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const access = parseProjectAccess(req, res, user) orelse return;
@@ -1006,9 +1007,9 @@ pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
     };
     const a = app();
 
-    // Check file belongs to project
+    // Get file info including storage_path
     var file_stmt = try a.db.prepare(
-        "SELECT id, original_name FROM files WHERE id = ? AND project_id = ? LIMIT 1",
+        "SELECT id, original_name, storage_path, file_size FROM files WHERE id = ? AND project_id = ? LIMIT 1",
     );
     defer file_stmt.deinit();
     try file_stmt.bindInt(1, file_id);
@@ -1020,26 +1021,107 @@ pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
     }
 
     const file_name = try dupOrEmpty(res.arena, file_stmt.columnText(1));
+    const storage_path = try dupOrEmpty(res.arena, file_stmt.columnText(2));
 
-    // Get content from document_content table
-    var content_stmt = try a.db.prepare(
-        "SELECT content_text FROM document_content WHERE file_id = ?",
-    );
-    defer content_stmt.deinit();
-    try content_stmt.bindInt(1, file_id);
+    // Step 1: Try document_content table (cached extraction)
+    {
+        var content_stmt = try a.db.prepare(
+            "SELECT content_text, extraction_method FROM document_content WHERE file_id = ?",
+        );
+        defer content_stmt.deinit();
+        try content_stmt.bindInt(1, file_id);
 
-    if (try content_stmt.step()) {
-        const content = content_stmt.columnText(0) orelse "";
-        const content_owned = try a.allocator.dupe(u8, content);
-        defer a.allocator.free(content_owned);
-
-        try res.json(.{
-            .content = content_owned,
-            .file_name = file_name,
-        }, .{});
-    } else {
-        jsonError(res, 404, "Текст не витягнуто для цього файлу. Спробуйте завантажити файл знову.");
+        if (try content_stmt.step()) {
+            const content = content_stmt.columnText(0) orelse "";
+            const method = content_stmt.columnText(1) orelse "";
+            // If we have non-empty content, return it
+            if (content.len > 0) {
+                const content_owned = try res.arena.dupe(u8, content);
+                try res.json(.{ .content = content_owned, .file_name = file_name }, .{});
+                return;
+            }
+            // If extraction failed before, try again from disk (don't return empty)
+            if (std.mem.eql(u8, method, "failed")) {
+                std.log.info("Previous extraction failed for file_id={d}, retrying from disk", .{file_id});
+            }
+        }
     }
+
+    // Step 2: Read raw file from disk (lazy extraction)
+    std.log.info("No cached content for file_id={d}, reading from disk: {s}", .{ file_id, storage_path });
+
+    const file_data = blk: {
+        const file = std.fs.openFileAbsolute(storage_path, .{}) catch |err| {
+            std.log.warn("Cannot open file at {s}: {any}", .{ storage_path, err });
+            break :blk null;
+        };
+        defer file.close();
+        break :blk file.readToEndAlloc(a.allocator, 50 * 1024 * 1024) catch |err| {
+            std.log.warn("Cannot read file at {s}: {any}", .{ storage_path, err });
+            break :blk null;
+        };
+    };
+
+    if (file_data) |data| {
+        defer a.allocator.free(data);
+
+        if (pricing.isTextContent(data)) {
+            // Text file: use raw content directly
+            // Store in document_content for future requests
+            storeContentCache(a, file_id, data, "inline_text_lazy");
+            try res.json(.{ .content = data, .file_name = file_name }, .{});
+            return;
+        }
+
+        // Binary file: try Python processor extraction
+        if (processor_client.extractTextWithRetry(a.allocator, &a.config, storage_path, file_name)) |text_content| {
+            defer a.allocator.free(text_content);
+            if (text_content.len > 0) {
+                storeContentCache(a, file_id, text_content, "python_processor_lazy");
+                try res.json(.{ .content = text_content, .file_name = file_name }, .{});
+                return;
+            }
+        } else |err| {
+            std.log.warn("Lazy extraction failed for file_id={d}: {any}", .{ file_id, err });
+        }
+
+        // Binary file, extraction failed — return file metadata as content
+        var info_buf: [512]u8 = undefined;
+        const is_pdf = pricing.isPdfContent(data);
+        const info = if (is_pdf) blk: {
+            const pages = pricing.countPdfPages(data);
+            break :blk std.fmt.bufPrint(&info_buf, "[PDF документ, ~{d} стор., {d} байт]\n\nТекст цього файлу не вдалося витягти автоматично. Спробуйте завантажити файл повторно.", .{ pages, data.len }) catch "PDF документ";
+        } else blk: {
+            const pages = pricing.estimateDocPages(@intCast(data.len), file_name);
+            break :blk std.fmt.bufPrint(&info_buf, "[Документ, ~{d} стор., {d} байт]\n\nТекст цього файлу не вдалося витягти автоматично. Спробуйте завантажити файл повторно.", .{ pages, data.len }) catch "Документ";
+        };
+        try res.json(.{ .content = info, .file_name = file_name }, .{});
+        return;
+    }
+
+    // Step 3: File not on disk either — give helpful info, not 404
+    try res.json(.{
+        .content = "Файл недоступний на сервері. Завантажте його повторно.",
+        .file_name = file_name,
+    }, .{});
+}
+
+/// Store extracted text in document_content cache (best-effort, errors logged)
+fn storeContentCache(a: anytype, file_id: i64, content: []const u8, method: []const u8) void {
+    var stmt = a.db.prepare(
+        "INSERT OR REPLACE INTO document_content (file_id, content_text, extracted_at, extraction_method) VALUES (?, ?, ?, ?)",
+    ) catch |err| {
+        std.log.warn("Failed to cache content for file_id={d}: {any}", .{ file_id, err });
+        return;
+    };
+    defer stmt.deinit();
+    stmt.bindInt(1, file_id) catch return;
+    stmt.bindText(2, content) catch return;
+    stmt.bindInt(3, std.time.timestamp()) catch return;
+    stmt.bindText(4, method) catch return;
+    stmt.exec() catch |err| {
+        std.log.warn("Failed to exec cache content for file_id={d}: {any}", .{ file_id, err });
+    };
 }
 
 pub fn handleListTeam(req: *httpz.Request, res: *httpz.Response) !void {

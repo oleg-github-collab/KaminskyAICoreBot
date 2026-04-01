@@ -59,19 +59,31 @@ const FileViewer = {
         const main = document.getElementById('fv-main');
         if (!main) return;
 
-        try {
+        const tryLoad = async () => {
             const data = await API.getFileContent(projectId, fileId);
             this.currentContent = data.content || '';
             this.renderSingleContent(main, this.currentContent);
+        };
+
+        try {
+            await tryLoad();
         } catch (e) {
-            main.innerHTML = `
-                <div class="empty" style="padding:40px;text-align:center">
-                    <div style="font-size:48px;margin-bottom:12px">📄</div>
-                    <p>Текст недоступний</p>
-                    <p style="font-size:13px;color:var(--hint);margin-top:8px">
-                        Файл ще обробляється або текст недоступний для цього формату.
-                    </p>
-                </div>`;
+            // Retry once after 1.5s (lazy extraction may need time)
+            try {
+                await new Promise(r => setTimeout(r, 1500));
+                await tryLoad();
+            } catch (e2) {
+                main.innerHTML = `
+                    <div class="empty" style="padding:40px;text-align:center">
+                        <div style="font-size:48px;margin-bottom:12px">\ud83d\udcc4</div>
+                        <p>Не вдалося завантажити текст</p>
+                        <p style="font-size:13px;color:var(--hint);margin-top:8px">${App.esc(e2.message)}</p>
+                        <button class="btn btn-primary btn-sm" style="margin-top:12px"
+                            onclick="FileViewer.loadContent(${projectId}, ${fileId})">
+                            \u21bb Спробувати знову
+                        </button>
+                    </div>`;
+            }
         }
     },
 
