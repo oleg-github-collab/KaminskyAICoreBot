@@ -913,33 +913,45 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
 
             std.log.info("Stored inline text {d} chars for file_id={d} ({s})", .{ file_field.value.len, file_id, original_name });
         } else {
-            // Binary files (PDF, DOCX): try Python processor with retry
-            if (processor_client.extractTextWithRetry(a.allocator, &a.config, store_path, original_name)) |text_content| {
+            // Binary files (PDF, DOCX): try local extraction first (pdftotext, unzip)
+            var extracted = false;
+            if (processor_client.extractTextLocal(a.allocator, store_path, original_name)) |text_content| {
                 defer a.allocator.free(text_content);
-
-                var content_stmt = try a.db.prepare(
-                    "INSERT OR REPLACE INTO document_content (file_id, content_text, extracted_at, extraction_method) VALUES (?, ?, ?, ?)",
-                );
-                defer content_stmt.deinit();
-                try content_stmt.bindInt(1, file_id);
-                try content_stmt.bindText(2, text_content);
-                try content_stmt.bindInt(3, std.time.timestamp());
-                try content_stmt.bindText(4, "python_processor");
-                try content_stmt.exec();
-
-                std.log.info("Extracted {d} chars from file_id={d} ({s})", .{ text_content.len, file_id, original_name });
+                if (text_content.len > 0) {
+                    var content_stmt = try a.db.prepare(
+                        "INSERT OR REPLACE INTO document_content (file_id, content_text, extracted_at, extraction_method) VALUES (?, ?, ?, ?)",
+                    );
+                    defer content_stmt.deinit();
+                    try content_stmt.bindInt(1, file_id);
+                    try content_stmt.bindText(2, text_content);
+                    try content_stmt.bindInt(3, std.time.timestamp());
+                    try content_stmt.bindText(4, "local_extraction");
+                    try content_stmt.exec();
+                    std.log.info("Local extracted {d} chars from file_id={d} ({s})", .{ text_content.len, file_id, original_name });
+                    extracted = true;
+                }
             } else |err| {
-                std.log.warn("Text extraction failed for file_id={d} ({s}): {any}", .{ file_id, original_name, err });
-                // Store placeholder so user sees helpful message
-                var fallback_stmt = try a.db.prepare(
-                    "INSERT OR REPLACE INTO document_content (file_id, content_text, extracted_at, extraction_method) VALUES (?, ?, ?, ?)",
-                );
-                defer fallback_stmt.deinit();
-                try fallback_stmt.bindInt(1, file_id);
-                try fallback_stmt.bindText(2, "");
-                try fallback_stmt.bindInt(3, std.time.timestamp());
-                try fallback_stmt.bindText(4, "failed");
-                try fallback_stmt.exec();
+                std.log.info("Local extraction unavailable for file_id={d} ({s}): {any}", .{ file_id, original_name, err });
+            }
+
+            // Fallback: try Python processor
+            if (!extracted) {
+                if (processor_client.extractTextWithRetry(a.allocator, &a.config, store_path, original_name)) |text_content| {
+                    defer a.allocator.free(text_content);
+                    var content_stmt = try a.db.prepare(
+                        "INSERT OR REPLACE INTO document_content (file_id, content_text, extracted_at, extraction_method) VALUES (?, ?, ?, ?)",
+                    );
+                    defer content_stmt.deinit();
+                    try content_stmt.bindInt(1, file_id);
+                    try content_stmt.bindText(2, text_content);
+                    try content_stmt.bindInt(3, std.time.timestamp());
+                    try content_stmt.bindText(4, "python_processor");
+                    try content_stmt.exec();
+                    std.log.info("Processor extracted {d} chars from file_id={d} ({s})", .{ text_content.len, file_id, original_name });
+                } else |err| {
+                    std.log.warn("All extraction failed for file_id={d} ({s}): {any}", .{ file_id, original_name, err });
+                    // Don't store empty placeholder — let lazy extraction retry later
+                }
             }
         }
     }
@@ -1066,34 +1078,48 @@ pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
         defer a.allocator.free(data);
 
         if (pricing.isTextContent(data)) {
-            // Text file: use raw content directly
-            // Store in document_content for future requests
-            storeContentCache(a, file_id, data, "inline_text_lazy");
-            try res.json(.{ .content = data, .file_name = file_name }, .{});
+            // Text file: use raw content directly — cast []u8 → []const u8 for JSON string
+            const text: []const u8 = data;
+            storeContentCache(a, file_id, text, "inline_text_lazy");
+            try res.json(.{ .content = text, .file_name = file_name }, .{});
             return;
         }
 
-        // Binary file: try Python processor extraction
-        if (processor_client.extractTextWithRetry(a.allocator, &a.config, storage_path, file_name)) |text_content| {
+        // Binary file: try LOCAL extraction first (pdftotext, unzip — fast, no network)
+        if (processor_client.extractTextLocal(a.allocator, storage_path, file_name)) |text_content| {
             defer a.allocator.free(text_content);
             if (text_content.len > 0) {
-                storeContentCache(a, file_id, text_content, "python_processor_lazy");
-                try res.json(.{ .content = text_content, .file_name = file_name }, .{});
+                const text: []const u8 = text_content;
+                storeContentCache(a, file_id, text, "local_extraction");
+                try res.json(.{ .content = text, .file_name = file_name }, .{});
                 return;
             }
         } else |err| {
-            std.log.warn("Lazy extraction failed for file_id={d}: {any}", .{ file_id, err });
+            std.log.info("Local extraction unavailable for file_id={d}: {any}, trying processor...", .{ file_id, err });
         }
 
-        // Binary file, extraction failed — return file metadata as content
+        // Fallback: try Python processor extraction (remote, may be slow/unavailable)
+        if (processor_client.extractTextWithRetry(a.allocator, &a.config, storage_path, file_name)) |text_content| {
+            defer a.allocator.free(text_content);
+            if (text_content.len > 0) {
+                const text: []const u8 = text_content;
+                storeContentCache(a, file_id, text, "python_processor_lazy");
+                try res.json(.{ .content = text, .file_name = file_name }, .{});
+                return;
+            }
+        } else |err| {
+            std.log.warn("Processor extraction also failed for file_id={d}: {any}", .{ file_id, err });
+        }
+
+        // All extraction failed — return file metadata as content
         var info_buf: [512]u8 = undefined;
         const is_pdf = pricing.isPdfContent(data);
-        const info = if (is_pdf) blk: {
+        const info: []const u8 = if (is_pdf) blk: {
             const pages = pricing.countPdfPages(data);
-            break :blk std.fmt.bufPrint(&info_buf, "[PDF документ, ~{d} стор., {d} байт]\n\nТекст цього файлу не вдалося витягти автоматично. Спробуйте завантажити файл повторно.", .{ pages, data.len }) catch "PDF документ";
+            break :blk std.fmt.bufPrint(&info_buf, "[PDF документ, ~{d} стор., {d} байт]\n\nТекст цього файлу не вдалося витягти автоматично.", .{ pages, data.len }) catch "PDF документ";
         } else blk: {
             const pages = pricing.estimateDocPages(@intCast(data.len), file_name);
-            break :blk std.fmt.bufPrint(&info_buf, "[Документ, ~{d} стор., {d} байт]\n\nТекст цього файлу не вдалося витягти автоматично. Спробуйте завантажити файл повторно.", .{ pages, data.len }) catch "Документ";
+            break :blk std.fmt.bufPrint(&info_buf, "[Документ, ~{d} стор., {d} байт]\n\nТекст цього файлу не вдалося витягти автоматично.", .{ pages, data.len }) catch "Документ";
         };
         try res.json(.{ .content = info, .file_name = file_name }, .{});
         return;

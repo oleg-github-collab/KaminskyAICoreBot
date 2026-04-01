@@ -96,11 +96,15 @@ pub fn countChars(text: []const u8) u64 {
     return count;
 }
 
-/// Detect whether file data is actual readable text (not binary/archive).
+/// Detect whether file data is actual readable text (not binary/archive/PDF).
 /// Returns false for ZIP-based docs (.docx, .xlsx, .pptx, .odt), OLE docs (.doc, .xls),
-/// and any file with a high ratio of null/control bytes.
+/// PDFs, and any file with a high ratio of null/control bytes.
 pub fn isTextContent(data: []const u8) bool {
     if (data.len == 0) return true;
+
+    // PDF signature: %PDF-
+    if (data.len >= 5 and data[0] == '%' and data[1] == 'P' and data[2] == 'D' and data[3] == 'F' and data[4] == '-')
+        return false;
 
     // ZIP signature: PK\x03\x04  → .docx, .xlsx, .pptx, .odt, .zip
     if (data.len >= 4 and data[0] == 0x50 and data[1] == 0x4B and data[2] == 0x03 and data[3] == 0x04)

@@ -401,6 +401,238 @@ pub fn checkBatch(
     return result.stdout;
 }
 
+/// Extract text locally using system tools (no Python processor needed).
+/// PDF → pdftotext, DOCX → unzip + strip XML tags.
+pub fn extractTextLocal(
+    allocator: std.mem.Allocator,
+    file_path: []const u8,
+    original_name: []const u8,
+) ![]const u8 {
+    // Detect file type by extension
+    const lower_name = blk: {
+        var buf = try allocator.alloc(u8, original_name.len);
+        for (original_name, 0..) |c, i| {
+            buf[i] = if (c >= 'A' and c <= 'Z') c + 32 else c;
+        }
+        break :blk buf;
+    };
+    defer allocator.free(lower_name);
+
+    const is_pdf = std.mem.endsWith(u8, lower_name, ".pdf");
+    const is_docx = std.mem.endsWith(u8, lower_name, ".docx");
+    const is_doc = std.mem.endsWith(u8, lower_name, ".doc");
+    const is_rtf = std.mem.endsWith(u8, lower_name, ".rtf");
+    const is_odt = std.mem.endsWith(u8, lower_name, ".odt");
+
+    if (is_pdf) {
+        return extractPdfText(allocator, file_path);
+    } else if (is_docx or is_odt) {
+        return extractDocxText(allocator, file_path, is_odt);
+    } else if (is_doc or is_rtf) {
+        // Legacy .doc/.rtf: no reliable local tool, return error for processor fallback
+        return error.UnsupportedFormat;
+    }
+    return error.UnsupportedFormat;
+}
+
+/// Extract text from PDF using pdftotext (poppler-utils).
+fn extractPdfText(allocator: std.mem.Allocator, file_path: []const u8) ![]const u8 {
+    std.log.info("extractPdfText: pdftotext {s}", .{file_path});
+
+    const result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{
+            "pdftotext",
+            "-layout",
+            "-enc",
+            "UTF-8",
+            file_path,
+            "-", // output to stdout
+        },
+        .max_output_bytes = 10 * 1024 * 1024, // 10MB max
+    }) catch |err| {
+        std.log.warn("pdftotext failed to run: {any}", .{err});
+        return error.ExtractionFailed;
+    };
+    defer allocator.free(result.stderr);
+
+    const ok = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!ok) {
+        allocator.free(result.stdout);
+        std.log.warn("pdftotext exited with error, stderr: {s}", .{result.stderr});
+        return error.ExtractionFailed;
+    }
+
+    if (result.stdout.len == 0) {
+        allocator.free(result.stdout);
+        return error.NoTextExtracted;
+    }
+
+    // result.stdout is already allocated by the allocator, return it directly
+    return result.stdout;
+}
+
+/// Extract text from DOCX/ODT by unzipping and stripping XML tags.
+fn extractDocxText(allocator: std.mem.Allocator, file_path: []const u8, is_odt: bool) ![]const u8 {
+    const xml_path = if (is_odt) "content.xml" else "word/document.xml";
+    std.log.info("extractDocxText: unzip -p {s} {s}", .{ file_path, xml_path });
+
+    const result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{
+            "unzip",
+            "-p",
+            file_path,
+            xml_path,
+        },
+        .max_output_bytes = 10 * 1024 * 1024,
+    }) catch |err| {
+        std.log.warn("unzip failed to run: {any}", .{err});
+        return error.ExtractionFailed;
+    };
+    defer allocator.free(result.stderr);
+
+    const ok = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!ok) {
+        allocator.free(result.stdout);
+        std.log.warn("unzip exited with error, stderr: {s}", .{result.stderr});
+        return error.ExtractionFailed;
+    }
+
+    if (result.stdout.len == 0) {
+        allocator.free(result.stdout);
+        return error.NoTextExtracted;
+    }
+
+    // Strip XML tags and normalize whitespace
+    const stripped = try stripXmlTags(allocator, result.stdout);
+    allocator.free(result.stdout);
+    return stripped;
+}
+
+/// Strip XML tags from text, keeping content. Normalizes whitespace.
+fn stripXmlTags(allocator: std.mem.Allocator, xml: []const u8) ![]const u8 {
+    var result = try std.ArrayList(u8).initCapacity(allocator, xml.len / 2);
+    errdefer result.deinit();
+
+    var in_tag = false;
+    var prev_was_space = true;
+    var i: usize = 0;
+
+    while (i < xml.len) {
+        const b = xml[i];
+        if (b == '<') {
+            // Check for paragraph/break tags → add newline
+            if (i + 4 < xml.len) {
+                const ahead = xml[i..@min(i + 20, xml.len)];
+                if (std.mem.startsWith(u8, ahead, "<w:p ") or
+                    std.mem.startsWith(u8, ahead, "<w:p>") or
+                    std.mem.startsWith(u8, ahead, "<w:p/>") or
+                    std.mem.startsWith(u8, ahead, "<text:p ") or
+                    std.mem.startsWith(u8, ahead, "<text:p>"))
+                {
+                    if (result.items.len > 0 and !prev_was_space) {
+                        try result.append('\n');
+                        prev_was_space = true;
+                    }
+                } else if (std.mem.startsWith(u8, ahead, "<w:br") or
+                    std.mem.startsWith(u8, ahead, "<text:line-break"))
+                {
+                    try result.append('\n');
+                    prev_was_space = true;
+                } else if (std.mem.startsWith(u8, ahead, "<w:tab") or
+                    std.mem.startsWith(u8, ahead, "<text:tab"))
+                {
+                    try result.append('\t');
+                    prev_was_space = false;
+                }
+            }
+            in_tag = true;
+            i += 1;
+            continue;
+        }
+        if (b == '>') {
+            in_tag = false;
+            i += 1;
+            continue;
+        }
+        if (!in_tag) {
+            // Decode common XML entities
+            if (b == '&' and i + 1 < xml.len) {
+                const remaining = xml[i..@min(i + 10, xml.len)];
+                if (std.mem.startsWith(u8, remaining, "&amp;")) {
+                    try result.append('&');
+                    i += 5;
+                    prev_was_space = false;
+                    continue;
+                } else if (std.mem.startsWith(u8, remaining, "&lt;")) {
+                    try result.append('<');
+                    i += 4;
+                    prev_was_space = false;
+                    continue;
+                } else if (std.mem.startsWith(u8, remaining, "&gt;")) {
+                    try result.append('>');
+                    i += 4;
+                    prev_was_space = false;
+                    continue;
+                } else if (std.mem.startsWith(u8, remaining, "&quot;")) {
+                    try result.append('"');
+                    i += 6;
+                    prev_was_space = false;
+                    continue;
+                } else if (std.mem.startsWith(u8, remaining, "&apos;")) {
+                    try result.append('\'');
+                    i += 6;
+                    prev_was_space = false;
+                    continue;
+                } else if (std.mem.startsWith(u8, remaining, "&#")) {
+                    // Skip numeric entity — find ;
+                    var j = i + 2;
+                    while (j < xml.len and xml[j] != ';') : (j += 1) {}
+                    if (j < xml.len) {
+                        i = j + 1;
+                    } else {
+                        i += 1;
+                    }
+                    continue;
+                }
+            }
+            // Normal character
+            if (b == ' ' or b == '\t' or b == '\n' or b == '\r') {
+                if (!prev_was_space and result.items.len > 0) {
+                    try result.append(' ');
+                    prev_was_space = true;
+                }
+            } else {
+                try result.append(b);
+                prev_was_space = false;
+            }
+        }
+        i += 1;
+    }
+
+    // Trim trailing whitespace
+    while (result.items.len > 0 and (result.items[result.items.len - 1] == ' ' or
+        result.items[result.items.len - 1] == '\n' or
+        result.items[result.items.len - 1] == '\r'))
+    {
+        _ = result.pop();
+    }
+
+    if (result.items.len == 0) {
+        result.deinit();
+        return error.NoTextExtracted;
+    }
+
+    return try result.toOwnedSlice();
+}
+
 /// Extract text with retry (3 attempts, exponential backoff).
 pub fn extractTextWithRetry(
     allocator: std.mem.Allocator,
