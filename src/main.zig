@@ -186,6 +186,12 @@ pub fn main() !void {
     router.get("/api/projects/:project_id/workflow", miniapp_api.handleWorkflowStatus, .{});
     router.get("/api/projects/:project_id/instructions", miniapp_api.handleGetInstructions, .{});
     router.post("/api/projects/:project_id/instructions", miniapp_api.handleUpdateInstructions, .{});
+    router.get("/api/projects/:project_id/comments", miniapp_api.handleGetComments, .{});
+    router.post("/api/projects/:project_id/comments", miniapp_api.handleCreateComment, .{});
+    router.delete("/api/projects/:project_id/comments/:comment_id", miniapp_api.handleDeleteComment, .{});
+    router.post("/api/projects/:project_id/comments/:comment_id/accept", miniapp_api.handleAcceptSuggestion, .{});
+    router.post("/api/projects/:project_id/comments/:comment_id/reject", miniapp_api.handleRejectSuggestion, .{});
+    router.get("/api/projects/:project_id/files/:file_id/pair", miniapp_api.handleGetFilePair, .{});
     router.post("/api/auth/session", miniapp_api.handleCreateSession, .{});
 
     std.log.info("Server starting on 0.0.0.0:{d}...", .{config.port});

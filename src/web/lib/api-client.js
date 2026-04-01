@@ -160,7 +160,7 @@ const API = {
         return this.req('GET', '/projects/' + pid + '/glossary/search?' + params.toString());
     },
 
-    // Comments
+    // Comments & Suggestions
     getComments(pid, resourceType, resourceId) {
         return this.req('GET', '/projects/' + pid + '/comments?type=' + resourceType + '&id=' + resourceId);
     },
@@ -169,6 +169,17 @@ const API = {
     },
     deleteComment(pid, commentId) {
         return this.req('DELETE', '/projects/' + pid + '/comments/' + commentId);
+    },
+    acceptSuggestion(pid, commentId) {
+        return this.req('POST', '/projects/' + pid + '/comments/' + commentId + '/accept');
+    },
+    rejectSuggestion(pid, commentId) {
+        return this.req('POST', '/projects/' + pid + '/comments/' + commentId + '/reject');
+    },
+
+    // File pairs (bilingual)
+    getFilePair(pid, fid) {
+        return this.req('GET', '/projects/' + pid + '/files/' + fid + '/pair');
     },
 
     // Instructions

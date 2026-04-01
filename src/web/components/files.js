@@ -15,6 +15,7 @@ const FilesView = {
                 <button class="tab active" data-cat="all">Всі</button>
                 <button class="tab" data-cat="source">Вихідні</button>
                 <button class="tab" data-cat="reference">Референс</button>
+                <button class="tab" data-cat="translated">Переклади</button>
             </div>
             <div class="upload-card">
                 <div class="card-title">\ud83d\udce4 Завантажити файли</div>
@@ -110,6 +111,12 @@ const FilesView = {
                                 data-tooltip="Переглянути">
                             \ud83d\udc41\ufe0f
                         </button>
+                        ${f.category === 'translated' ? `
+                        <button class="btn btn-icon btn-secondary"
+                                onclick="FileViewer.showPair(${pid}, ${f.id}, '${App.esc(f.original_name).replace(/'/g, "\\'")}')"
+                                data-tooltip="Порівняти з оригіналом">
+                            \u2194
+                        </button>` : ''}
                         <button class="btn btn-icon"
                                 style="color:var(--red);background:var(--red-bg)"
                                 onclick="FilesView.deleteFile(${pid},${f.id},'${App.esc(f.original_name).replace(/'/g, "\\'")}')"

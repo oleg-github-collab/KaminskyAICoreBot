@@ -897,8 +897,8 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
         price_cents,
     );
 
-    // Extract text content for quoting (source/reference files only)
-    if (std.mem.eql(u8, category, "source") or std.mem.eql(u8, category, "reference")) {
+    // Extract text content for quoting (source/reference/translated files)
+    if (std.mem.eql(u8, category, "source") or std.mem.eql(u8, category, "reference") or std.mem.eql(u8, category, "translated")) {
         if (pricing.isTextContent(file_field.value)) {
             // Text files: store raw content directly (no processor needed)
             var content_stmt = try a.db.prepare(
@@ -913,8 +913,8 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
 
             std.log.info("Stored inline text {d} chars for file_id={d} ({s})", .{ file_field.value.len, file_id, original_name });
         } else {
-            // Binary files (PDF, DOCX): try Python processor
-            if (processor_client.extractText(a.allocator, &a.config, store_path, original_name)) |text_content| {
+            // Binary files (PDF, DOCX): try Python processor with retry
+            if (processor_client.extractTextWithRetry(a.allocator, &a.config, store_path, original_name)) |text_content| {
                 defer a.allocator.free(text_content);
 
                 var content_stmt = try a.db.prepare(
@@ -930,6 +930,16 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
                 std.log.info("Extracted {d} chars from file_id={d} ({s})", .{ text_content.len, file_id, original_name });
             } else |err| {
                 std.log.warn("Text extraction failed for file_id={d} ({s}): {any}", .{ file_id, original_name, err });
+                // Store placeholder so user sees helpful message
+                var fallback_stmt = try a.db.prepare(
+                    "INSERT OR REPLACE INTO document_content (file_id, content_text, extracted_at, extraction_method) VALUES (?, ?, ?, ?)",
+                );
+                defer fallback_stmt.deinit();
+                try fallback_stmt.bindInt(1, file_id);
+                try fallback_stmt.bindText(2, "");
+                try fallback_stmt.bindInt(3, std.time.timestamp());
+                try fallback_stmt.bindText(4, "failed");
+                try fallback_stmt.exec();
             }
         }
     }
@@ -2197,4 +2207,331 @@ pub fn handleUpdateInstructions(req: *httpz.Request, res: *httpz.Response) !void
     try stmt.exec();
 
     try res.json(.{ .ok = true }, .{});
+}
+
+// ─── Comments & Suggestions ───────────────────────────────────────────────────
+
+/// GET /api/projects/:project_id/comments?type=file&id=123
+pub fn handleGetComments(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    _ = user;
+    const a = app();
+
+    const query = try req.query();
+    const resource_type = query.get("type") orelse {
+        jsonError(res, 400, "Параметр type обов'язковий.");
+        return;
+    };
+    const resource_id_str = query.get("id") orelse {
+        jsonError(res, 400, "Параметр id обов'язковий.");
+        return;
+    };
+    const resource_id = std.fmt.parseInt(i64, resource_id_str, 10) catch {
+        jsonError(res, 400, "Некоректний id.");
+        return;
+    };
+
+    var stmt = try a.db.prepare(
+        \\SELECT c.id, c.parent_id, c.user_id, u.first_name, u.username,
+        \\       c.content, c.content_format, c.created_at, c.updated_at,
+        \\       c.start_offset, c.end_offset, c.quoted_text,
+        \\       c.comment_type, c.suggested_text, c.suggestion_status
+        \\FROM comments c
+        \\JOIN users u ON u.id = c.user_id
+        \\WHERE c.project_id = ? AND c.resource_type = ? AND c.resource_id = ? AND c.deleted_at IS NULL
+        \\ORDER BY c.start_offset ASC NULLS LAST, c.created_at ASC
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, access.project_id);
+    try stmt.bindText(2, resource_type);
+    try stmt.bindInt(3, resource_id);
+
+    const Comment = struct {
+        id: i64,
+        parent_id: ?i64,
+        user_id: i64,
+        user_name: []const u8,
+        username: []const u8,
+        content: []const u8,
+        content_format: []const u8,
+        created_at: i64,
+        updated_at: ?i64,
+        start_offset: ?i64,
+        end_offset: ?i64,
+        quoted_text: []const u8,
+        comment_type: []const u8,
+        suggested_text: []const u8,
+        suggestion_status: []const u8,
+        can_edit: bool,
+        can_delete: bool,
+    };
+
+    var items = std.ArrayList(Comment).init(res.arena);
+    while (try stmt.step()) {
+        const uid = stmt.columnInt(2);
+        const parent_raw = stmt.columnInt(1);
+        const updated_raw = stmt.columnInt(8);
+        const so = stmt.columnInt(9);
+        const eo = stmt.columnInt(10);
+        try items.append(.{
+            .id = stmt.columnInt(0),
+            .parent_id = if (parent_raw == 0) null else parent_raw,
+            .user_id = uid,
+            .user_name = try dupOrEmpty(res.arena, stmt.columnText(3)),
+            .username = try dupOrEmpty(res.arena, stmt.columnText(4)),
+            .content = try dupOrEmpty(res.arena, stmt.columnText(5)),
+            .content_format = try dupOrEmpty(res.arena, stmt.columnText(6)),
+            .created_at = stmt.columnInt(7),
+            .updated_at = if (updated_raw == 0) null else updated_raw,
+            .start_offset = if (so == 0 and eo == 0) null else so,
+            .end_offset = if (so == 0 and eo == 0) null else eo,
+            .quoted_text = try dupOrEmpty(res.arena, stmt.columnText(11)),
+            .comment_type = try dupOrEmpty(res.arena, stmt.columnText(12)),
+            .suggested_text = try dupOrEmpty(res.arena, stmt.columnText(13)),
+            .suggestion_status = try dupOrEmpty(res.arena, stmt.columnText(14)),
+            .can_edit = false,
+            .can_delete = true,
+        });
+    }
+
+    try res.json(.{ .comments = try items.toOwnedSlice() }, .{});
+}
+
+/// POST /api/projects/:project_id/comments
+pub fn handleCreateComment(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    const body = req.body() orelse {
+        jsonError(res, 400, "Пустий запит.");
+        return;
+    };
+
+    const parsed = std.json.parseFromSlice(struct {
+        resource_type: ?[]const u8 = null,
+        resource_id: ?i64 = null,
+        content: ?[]const u8 = null,
+        format: ?[]const u8 = null,
+        parent_id: ?i64 = null,
+        start_offset: ?i64 = null,
+        end_offset: ?i64 = null,
+        quoted_text: ?[]const u8 = null,
+        comment_type: ?[]const u8 = null,
+        suggested_text: ?[]const u8 = null,
+    }, res.arena, body, .{ .ignore_unknown_fields = true }) catch {
+        jsonError(res, 400, "Невірний формат JSON.");
+        return;
+    };
+    defer parsed.deinit();
+
+    const v = parsed.value;
+    const resource_type = v.resource_type orelse {
+        jsonError(res, 400, "resource_type обов'язковий.");
+        return;
+    };
+    const resource_id = v.resource_id orelse {
+        jsonError(res, 400, "resource_id обов'язковий.");
+        return;
+    };
+    const content = v.content orelse {
+        jsonError(res, 400, "content обов'язковий.");
+        return;
+    };
+
+    const comment_type = v.comment_type orelse "comment";
+    const now = std.time.timestamp();
+
+    var stmt2 = try a.db.prepare(
+        \\INSERT INTO comments (project_id, resource_type, resource_id, user_id, content, content_format,
+        \\    parent_id, created_at, start_offset, end_offset, quoted_text, comment_type, suggested_text, suggestion_status)
+        \\VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    );
+    defer stmt2.deinit();
+    try stmt2.bindInt(1, access.project_id);
+    try stmt2.bindText(2, resource_type);
+    try stmt2.bindInt(3, resource_id);
+    try stmt2.bindInt(4, user.id);
+    try stmt2.bindText(5, content);
+    try stmt2.bindText(6, v.format orelse "html");
+    if (v.parent_id) |pid| {
+        try stmt2.bindInt(7, pid);
+    } else {
+        try stmt2.bindNull(7);
+    }
+    try stmt2.bindInt(8, now);
+    if (v.start_offset) |so| {
+        try stmt2.bindInt(9, so);
+    } else {
+        try stmt2.bindNull(9);
+    }
+    if (v.end_offset) |eo| {
+        try stmt2.bindInt(10, eo);
+    } else {
+        try stmt2.bindNull(10);
+    }
+    if (v.quoted_text) |qt| {
+        try stmt2.bindText(11, qt);
+    } else {
+        try stmt2.bindNull(11);
+    }
+    try stmt2.bindText(12, comment_type);
+    if (v.suggested_text) |st| {
+        try stmt2.bindText(13, st);
+    } else {
+        try stmt2.bindNull(13);
+    }
+    if (std.mem.eql(u8, comment_type, "suggestion")) {
+        try stmt2.bindText(14, "pending");
+    } else {
+        try stmt2.bindNull(14);
+    }
+    try stmt2.exec();
+
+    res.status = 201;
+    try res.json(.{ .ok = true, .id = a.db.lastInsertRowId() }, .{});
+}
+
+/// DELETE /api/projects/:project_id/comments/:comment_id
+pub fn handleDeleteComment(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    _ = user;
+    const a = app();
+
+    const comment_id = parseIntParam(req, "comment_id") catch {
+        jsonError(res, 400, "Некоректний ідентифікатор коментаря.");
+        return;
+    };
+
+    var del_stmt = try a.db.prepare(
+        "UPDATE comments SET deleted_at = ? WHERE id = ? AND project_id = ?",
+    );
+    defer del_stmt.deinit();
+    try del_stmt.bindInt(1, std.time.timestamp());
+    try del_stmt.bindInt(2, comment_id);
+    try del_stmt.bindInt(3, access.project_id);
+    try del_stmt.exec();
+
+    try res.json(.{ .ok = true }, .{});
+}
+
+/// POST /api/projects/:project_id/comments/:comment_id/accept
+pub fn handleAcceptSuggestion(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    _ = user;
+    const a = app();
+
+    const comment_id = parseIntParam(req, "comment_id") catch {
+        jsonError(res, 400, "Некоректний ідентифікатор.");
+        return;
+    };
+
+    var acc_stmt = try a.db.prepare(
+        "UPDATE comments SET suggestion_status = 'accepted', updated_at = ? WHERE id = ? AND project_id = ? AND comment_type = 'suggestion'",
+    );
+    defer acc_stmt.deinit();
+    try acc_stmt.bindInt(1, std.time.timestamp());
+    try acc_stmt.bindInt(2, comment_id);
+    try acc_stmt.bindInt(3, access.project_id);
+    try acc_stmt.exec();
+
+    try res.json(.{ .ok = true }, .{});
+}
+
+/// POST /api/projects/:project_id/comments/:comment_id/reject
+pub fn handleRejectSuggestion(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    _ = user;
+    const a = app();
+
+    const comment_id = parseIntParam(req, "comment_id") catch {
+        jsonError(res, 400, "Некоректний ідентифікатор.");
+        return;
+    };
+
+    var rej_stmt = try a.db.prepare(
+        "UPDATE comments SET suggestion_status = 'rejected', updated_at = ? WHERE id = ? AND project_id = ? AND comment_type = 'suggestion'",
+    );
+    defer rej_stmt.deinit();
+    try rej_stmt.bindInt(1, std.time.timestamp());
+    try rej_stmt.bindInt(2, comment_id);
+    try rej_stmt.bindInt(3, access.project_id);
+    try rej_stmt.exec();
+
+    try res.json(.{ .ok = true }, .{});
+}
+
+/// GET /api/projects/:project_id/files/:file_id/pair — Get source+translated file pair
+pub fn handleGetFilePair(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    _ = user;
+    const a = app();
+
+    const file_id = parseIntParam(req, "file_id") catch {
+        jsonError(res, 400, "Некоректний ідентифікатор файлу.");
+        return;
+    };
+
+    // Find the translation job linking source and translated files
+    var job_stmt = try a.db.prepare(
+        \\SELECT source_file_id, result_file_id FROM translation_jobs
+        \\WHERE project_id = ? AND (source_file_id = ? OR result_file_id = ?) AND result_file_id IS NOT NULL
+        \\LIMIT 1
+    );
+    defer job_stmt.deinit();
+    try job_stmt.bindInt(1, access.project_id);
+    try job_stmt.bindInt(2, file_id);
+    try job_stmt.bindInt(3, file_id);
+
+    if (!(try job_stmt.step())) {
+        jsonError(res, 404, "Пару файлів не знайдено.");
+        return;
+    }
+
+    const source_fid = job_stmt.columnInt(0);
+    const target_fid = job_stmt.columnInt(1);
+
+    // Load source file info + content
+    var src_stmt = try a.db.prepare(
+        \\SELECT f.original_name, COALESCE(dc.content_text, '') FROM files f
+        \\LEFT JOIN document_content dc ON dc.file_id = f.id
+        \\WHERE f.id = ? AND f.project_id = ?
+    );
+    defer src_stmt.deinit();
+    try src_stmt.bindInt(1, source_fid);
+    try src_stmt.bindInt(2, access.project_id);
+
+    var source_name: []const u8 = "";
+    var source_content: []const u8 = "";
+    if (try src_stmt.step()) {
+        source_name = try dupOrEmpty(res.arena, src_stmt.columnText(0));
+        source_content = try dupOrEmpty(res.arena, src_stmt.columnText(1));
+    }
+
+    // Load target file info + content
+    var tgt_stmt = try a.db.prepare(
+        \\SELECT f.original_name, COALESCE(dc.content_text, '') FROM files f
+        \\LEFT JOIN document_content dc ON dc.file_id = f.id
+        \\WHERE f.id = ? AND f.project_id = ?
+    );
+    defer tgt_stmt.deinit();
+    try tgt_stmt.bindInt(1, target_fid);
+    try tgt_stmt.bindInt(2, access.project_id);
+
+    var target_name: []const u8 = "";
+    var target_content: []const u8 = "";
+    if (try tgt_stmt.step()) {
+        target_name = try dupOrEmpty(res.arena, tgt_stmt.columnText(0));
+        target_content = try dupOrEmpty(res.arena, tgt_stmt.columnText(1));
+    }
+
+    try res.json(.{
+        .source_file = .{ .id = source_fid, .name = source_name, .content = source_content },
+        .target_file = .{ .id = target_fid, .name = target_name, .content = target_content },
+    }, .{});
 }

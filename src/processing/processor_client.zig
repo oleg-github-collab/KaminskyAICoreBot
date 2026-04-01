@@ -401,6 +401,30 @@ pub fn checkBatch(
     return result.stdout;
 }
 
+/// Extract text with retry (3 attempts, exponential backoff).
+pub fn extractTextWithRetry(
+    allocator: std.mem.Allocator,
+    config: *const config_mod.Config,
+    file_path: []const u8,
+    original_name: []const u8,
+) ![]const u8 {
+    var attempt: u8 = 0;
+    while (attempt < 3) : (attempt += 1) {
+        if (extractText(allocator, config, file_path, original_name)) |text| {
+            return text;
+        } else |err| {
+            if (attempt < 2) {
+                std.log.warn("extractText attempt {d} failed: {any}, retrying...", .{ attempt + 1, err });
+                std.time.sleep(200_000_000 * (@as(u64, 1) << @intCast(attempt)));
+            } else {
+                std.log.err("extractText failed after 3 attempts: {any}", .{err});
+                return err;
+            }
+        }
+    }
+    return error.ProcessorCallFailed;
+}
+
 /// Extract text content from document for quoting.
 pub fn extractText(
     allocator: std.mem.Allocator,
@@ -430,7 +454,7 @@ pub fn extractText(
             "--connect-timeout",
             "10",
             "--max-time",
-            "120",
+            "300",
             "-X",
             "POST",
             "-H",
