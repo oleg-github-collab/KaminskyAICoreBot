@@ -52,7 +52,7 @@ const PricingView = {
                 </div>`;
 
             if (pay && totalCents > 0) {
-                pay.innerHTML = `<button class="btn btn-primary" onclick="PricingView.createInvoice(${pid})">Оплатити \u20ac${App.fmtEuro(totalCents)}</button>`;
+                pay.innerHTML = `<button class="btn btn-primary" style="margin-top:16px" onclick="PricingView.createInvoice(${pid})">💳 Оплатити \u20ac${App.fmtEuro(totalCents)}</button>`;
             } else if (pay) {
                 pay.innerHTML = '';
             }

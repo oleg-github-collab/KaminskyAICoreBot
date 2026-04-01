@@ -33,27 +33,20 @@ const ProjectsView = {
                     const desc = p.description || (p.source_lang && p.target_lang ? p.source_lang + ' \u2192 ' + p.target_lang : '');
                     return `
                     <div class="card project-card" style="cursor:pointer" onclick='ProjectsView.select(${JSON.stringify(p).replace(/'/g, "\\'")})'>
-                        <div style="display:flex;justify-content:space-between;align-items:center">
-                            <div style="flex:1;min-width:0">
+                        <div class="project-card-top">
+                            <div class="project-card-info">
                                 <div class="card-title">${App.esc(p.name)}</div>
-                                ${desc ? `<div class="card-sub" style="margin-top:4px">${App.esc(desc)}</div>` : ''}
+                                ${desc ? `<div class="card-sub">${App.esc(desc)}</div>` : ''}
                             </div>
-                            <div style="display:flex;gap:6px;flex-shrink:0;margin-left:12px;align-items:center">
-                                <span class="card-badge">${App.esc(p.role)}</span>
-                                ${p.role === 'owner' ? `
-                                    <button class="btn btn-sm btn-secondary project-action-btn"
-                                            onclick="event.stopPropagation(); ProjectsView.editProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}', '${App.esc(p.description || '').replace(/'/g, "\\'")}')"
-                                            data-tooltip="Редагувати">
-                                        \u270f\ufe0f
-                                    </button>
-                                    <button class="btn btn-sm btn-danger project-action-btn"
-                                            onclick="event.stopPropagation(); ProjectsView.deleteProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}')"
-                                            data-tooltip="Видалити">
-                                        \u2715
-                                    </button>
-                                ` : ''}
-                            </div>
+                            <span class="card-badge">${App.esc(p.role)}</span>
                         </div>
+                        ${p.role === 'owner' ? `
+                        <div class="project-card-actions" onclick="event.stopPropagation()">
+                            <button class="btn btn-sm btn-secondary"
+                                    onclick="ProjectsView.editProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}', '${App.esc(p.description || '').replace(/'/g, "\\'")}')">\u270f\ufe0f Редагувати</button>
+                            <button class="btn btn-sm btn-danger"
+                                    onclick="ProjectsView.deleteProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}')">\u2715 Видалити</button>
+                        </div>` : ''}
                     </div>`;
                 }).join('');
             }

@@ -64,7 +64,7 @@ const SettingsView = {
                         <span style="font-size:14px">Зберігати форматування документів</span>
                     </label>
                 </div>
-                <button class="btn btn-primary" style="margin-top:8px" onclick="SettingsView.save(${pid})">Зберегти налаштування</button>`;
+                <button class="btn btn-primary" style="margin-top:16px" onclick="SettingsView.save(${pid})">💾 Зберегти налаштування</button>`;
         } catch (e) {
             form.innerHTML = `<p style="color:var(--hint);padding:12px">Помилка: ${App.esc(e.message)}</p>`;
         }

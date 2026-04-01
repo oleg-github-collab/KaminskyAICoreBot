@@ -186,23 +186,26 @@ body {
     letter-spacing: .02em; white-space: nowrap;
 }
 
-/* Project action buttons — compact and clean */
-.project-action-btn {
-    padding: 4px 10px !important;
-    font-size: 12px !important;
-    font-weight: 600;
-    border-radius: 8px;
-    min-height: 32px;
-    line-height: 1.2;
-    white-space: nowrap;
+/* Project card layout */
+.project-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
 }
-
-@media (max-width: 767px) {
-    .project-action-btn {
-        padding: 6px 12px !important;
-        font-size: 13px !important;
-        min-height: 36px;
-    }
+.project-card-info {
+    flex: 1;
+    min-width: 0;
+}
+.project-card-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+.project-card-actions .btn {
+    flex: 1;
 }
 
 /* Buttons */
@@ -295,6 +298,7 @@ select.input { appearance: auto; }
 .file-info { flex: 1; min-width: 0; }
 .file-name { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-meta { font-size: 12px; color: var(--hint); }
+.file-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 /* Glossary table — premium */
 .term-row {
@@ -610,14 +614,15 @@ select.input { appearance: auto; }
     margin-bottom: 16px; padding-bottom: 12px;
     border-bottom: 1px solid var(--border);
 }
-.section-header .back-btn {
+/* Back button — used in section-header and standalone */
+.back-btn {
     width: 36px; height: 36px; border-radius: 10px;
     border: 1.5px solid var(--border); background: var(--bg);
     color: var(--text); cursor: pointer; font-size: 16px;
     display: flex; align-items: center; justify-content: center;
-    transition: all var(--transition);
+    transition: all var(--transition); flex-shrink: 0;
 }
-.section-header .back-btn:hover {
+.back-btn:hover {
     background: var(--bg2); border-color: var(--btn); color: var(--btn);
 }
 .section-header h2 {
@@ -2111,4 +2116,770 @@ select:focus-visible {
 
 /* ═══════════════════════════════════════════════════════════════
    End File Viewer ✨
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════
+   📱 MOBILE-FIRST UX OVERHAUL — Telegram Mini App perfection
+   44px minimum touch targets, generous spacing, readable text
+   ═══════════════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+
+    /* ── Base / Body ── */
+    body {
+        font-size: 15px;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+        overscroll-behavior: contain;
+    }
+
+    #header { padding: 10px 14px 0; }
+    #header h1 { font-size: 16px; }
+    #content { padding: 10px 14px 100px; } /* extra bottom for safe area */
+
+    /* ── Navigation — pill tabs, scrollable ── */
+    #nav {
+        gap: 6px;
+        padding: 6px 0 10px;
+        margin: 0 -14px;
+        padding-left: 14px;
+        padding-right: 14px;
+    }
+    .nav-btn {
+        padding: 10px 16px;
+        font-size: 13px;
+        border-radius: 20px;
+        min-height: 44px;
+        gap: 5px;
+        flex-shrink: 0;
+    }
+    .nav-btn.active {
+        box-shadow: 0 3px 12px rgba(102, 126, 234, 0.35);
+    }
+
+    /* ── Breadcrumb — compact ── */
+    .breadcrumb { font-size: 12px; gap: 4px; }
+    .project-badge { padding: 3px 10px; font-size: 11px; }
+
+    /* ── Cards — spacious tap targets ── */
+    .card {
+        padding: 16px;
+        margin-bottom: 10px;
+        border-radius: 14px;
+    }
+    .card:hover { transform: none; box-shadow: var(--shadow-sm); }
+    .card::before { display: none; } /* no shimmer on mobile — perf */
+    .card-title { font-size: 16px; }
+    .card-sub { font-size: 14px; margin-top: 4px; }
+    .card-badge {
+        padding: 3px 10px;
+        font-size: 12px;
+        border-radius: 12px;
+    }
+
+    /* ── Buttons — PROPER touch targets ── */
+    .btn {
+        padding: 14px 18px;
+        font-size: 16px;
+        border-radius: 14px;
+        min-height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .btn:hover { opacity: 1; transform: none; } /* no hover on touch */
+    .btn:active { transform: scale(0.97); opacity: 0.9; }
+
+    .btn-sm {
+        padding: 10px 16px;
+        font-size: 14px;
+        min-height: 44px;
+        border-radius: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+    }
+
+    .btn-primary { border-radius: 14px; }
+    .btn-primary:hover { transform: none; box-shadow: 0 3px 12px rgba(102, 126, 234, 0.3); }
+    .btn-primary::before { display: none; } /* no shimmer animation on mobile */
+
+    .btn-icon {
+        min-width: 44px;
+        min-height: 44px;
+        padding: 10px;
+        font-size: 18px;
+        border-radius: 12px;
+    }
+
+    /* Project action buttons — bigger on mobile */
+    .project-action-btn {
+        padding: 8px 14px !important;
+        font-size: 15px !important;
+        min-height: 40px;
+        min-width: 40px;
+        border-radius: 10px;
+    }
+
+    /* ── Section headers ── */
+    .section-header {
+        gap: 10px;
+        margin-bottom: 14px;
+        padding-bottom: 10px;
+    }
+    .back-btn {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        font-size: 18px;
+    }
+    .section-header h2 {
+        font-size: 16px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .section-header .section-actions { gap: 6px; }
+    .section-header .section-actions .btn-sm {
+        padding: 8px 14px;
+        min-height: 40px;
+    }
+
+    /* ── Modals — bottom sheet style ── */
+    .modal-overlay {
+        align-items: flex-end;
+        padding: 0;
+    }
+    .modal {
+        border-radius: 20px 20px 0 0;
+        padding: 24px 20px;
+        padding-bottom: max(24px, env(safe-area-inset-bottom));
+        max-width: none;
+        width: 100%;
+        max-height: 90vh;
+        max-height: 90dvh;
+        overflow-y: auto;
+        animation: modalSlideUp .3s cubic-bezier(.21,1.02,.73,1);
+    }
+    .modal h3 {
+        font-size: 17px;
+        padding-bottom: 14px;
+    }
+    .modal p { font-size: 15px; }
+    .modal-actions {
+        gap: 10px;
+        padding-top: 12px;
+    }
+    .modal-actions .btn {
+        padding: 14px;
+        font-size: 16px;
+        min-height: 50px;
+    }
+
+    @keyframes modalSlideUp {
+        from { opacity: 0; transform: translateY(100%); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Forms — prevent iOS zoom ── */
+    .input, .form-input, .form-textarea, select.input {
+        font-size: 16px !important;
+        padding: 14px 16px;
+        border-radius: 12px;
+        min-height: 48px;
+    }
+    .form-textarea {
+        min-height: 100px;
+        line-height: 1.5;
+    }
+    .form-group { margin-bottom: 18px; }
+    .form-group label, .form-group .form-label {
+        font-size: 14px;
+        margin-bottom: 8px;
+    }
+    .form-group .form-hint { font-size: 13px; }
+
+    /* ── Search bar — bigger ── */
+    .search-bar input {
+        min-height: 48px;
+        padding: 14px 16px 14px 42px;
+        font-size: 16px !important;
+        border-radius: 14px;
+    }
+    .search-bar::before {
+        left: 14px;
+        font-size: 16px;
+    }
+
+    /* ── Tabs — proper touch targets ── */
+    .tabs {
+        gap: 6px;
+        margin-bottom: 14px;
+        overflow-x: auto;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+        flex-wrap: nowrap;
+    }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab {
+        padding: 10px 18px;
+        font-size: 14px;
+        min-height: 44px;
+        border-radius: 12px;
+        white-space: nowrap;
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+    }
+
+    /* ── Create card ── */
+    .create-card {
+        padding: 16px;
+        border-radius: 14px;
+    }
+    .create-card .card-title { font-size: 15px; margin-bottom: 12px; }
+    .create-card .create-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+    .create-card .create-row .btn {
+        width: 100%;
+        padding: 14px;
+    }
+
+    /* ── Stats grid ── */
+    .stats { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .stat {
+        padding: 14px 10px;
+        border-radius: 14px;
+    }
+    .stat:hover { transform: none; box-shadow: var(--shadow-sm); }
+    .stat::before { display: none; }
+    .stat-value { font-size: 20px; }
+    .stat-label { font-size: 12px; }
+
+    /* ── Glossary — mobile-optimized ── */
+    .glossary-toolbar {
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .glossary-toolbar .btn-sm {
+        flex: 1;
+        min-width: 0;
+        justify-content: center;
+    }
+
+    /* Term rows — stacked layout */
+    .term-row {
+        grid-template-columns: 36px 1fr;
+        gap: 6px 10px;
+        padding: 14px 12px;
+        border-radius: 10px;
+        margin: 4px 0;
+    }
+    .term-row:hover { background: transparent; }
+    .term-row:hover::before { display: none; }
+    .term-row.header { display: none; }
+
+    .term-row > .term-source,
+    .term-row > .term-target,
+    .term-row > .term-action {
+        grid-column: 1 / -1;
+        padding-left: 46px;
+    }
+
+    .term-source {
+        font-size: 15px;
+        padding-top: 4px;
+    }
+    .term-source::before {
+        content: none; /* Remove "Джерело:" prefix — clutters mobile */
+    }
+    .term-target { font-size: 15px; }
+    .term-target::before { content: none; }
+
+    .term-action {
+        display: flex;
+        gap: 8px;
+        padding-top: 6px;
+        flex-wrap: wrap;
+    }
+    .term-action button {
+        padding: 10px 18px;
+        font-size: 14px;
+        min-height: 44px;
+        border-radius: 10px;
+        flex: 1;
+        min-width: 80px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+    }
+    .approve-btn { font-weight: 700; }
+    .reject-btn { font-weight: 700; }
+    .edit-btn { font-weight: 700; }
+
+    .status-badge {
+        padding: 6px 14px;
+        font-size: 13px;
+        border-radius: 12px;
+    }
+
+    .domain-tag {
+        padding: 3px 10px;
+        font-size: 12px;
+    }
+
+    /* Term edit */
+    .term-edit-input {
+        padding: 12px 14px;
+        font-size: 16px !important;
+        min-height: 48px;
+        border-radius: 10px;
+    }
+
+    /* Edit inline button — always visible on mobile */
+    .btn-edit-inline {
+        opacity: 0.6;
+        min-width: 44px;
+        min-height: 44px;
+        padding: 10px;
+        font-size: 18px;
+        border-radius: 10px;
+        background: var(--bg2);
+    }
+
+    /* Confidence bar — bigger */
+    .confidence-bar { margin-top: 8px; gap: 8px; }
+    .confidence-fill { width: 80px; height: 8px; border-radius: 4px; }
+    .confidence-label { font-size: 12px; }
+
+    /* Drag handle */
+    .drag-handle {
+        font-size: 20px;
+        padding: 6px;
+        min-width: 36px;
+        min-height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* Checkbox — bigger */
+    .term-checkbox, .term-row input[type="checkbox"] {
+        width: 22px;
+        height: 22px;
+        margin: 0;
+    }
+
+    /* Batch bar — mobile friendly */
+    .batch-bar {
+        flex-wrap: wrap;
+        padding: 14px;
+        gap: 10px;
+        border-radius: 14px;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+    }
+    .batch-bar .batch-count { font-size: 15px; }
+    .batch-bar .batch-actions {
+        gap: 8px;
+        flex-wrap: wrap;
+        width: 100%;
+    }
+    .batch-bar .batch-actions .btn-sm {
+        flex: 1;
+        min-width: 0;
+    }
+
+    /* ── File items — bigger tap targets ── */
+    .file-item {
+        padding: 14px 4px;
+        gap: 12px;
+    }
+    .file-icon { font-size: 32px; }
+    .file-name { font-size: 15px; }
+    .file-meta { font-size: 13px; line-height: 1.5; }
+
+    .file-item .btn-sm,
+    .file-item .btn-secondary {
+        min-width: 44px;
+        min-height: 44px;
+        padding: 10px;
+        font-size: 18px;
+    }
+
+    /* ── Upload ── */
+    .upload-card { padding: 16px; border-radius: 14px; }
+    .upload-card .card-title { font-size: 15px; }
+    .upload-controls {
+        flex-direction: column;
+        gap: 10px;
+    }
+    .upload-controls select {
+        width: 100%;
+        padding: 12px 16px;
+        font-size: 16px !important;
+        min-height: 48px;
+    }
+    .upload-controls .btn { width: 100%; }
+
+    .drop-zone {
+        padding: 32px 16px;
+        border-radius: 14px;
+    }
+    .drop-zone .drop-icon { font-size: 40px; margin-bottom: 10px; }
+    .drop-zone p { font-size: 15px; }
+    .drop-zone .drop-hint { font-size: 13px; }
+
+    .progress-bar { height: 8px; border-radius: 4px; margin-top: 12px; }
+
+    /* ── Chat ── */
+    .chat-container {
+        height: calc(100vh - 150px);
+        height: calc(100dvh - 150px);
+    }
+
+    .chat-header {
+        padding-bottom: 10px;
+    }
+    .chat-bubble {
+        max-width: 88%;
+        padding: 12px 16px;
+        font-size: 15px;
+        border-radius: 18px;
+        line-height: 1.5;
+    }
+    .chat-bubble-out { border-bottom-right-radius: 6px; }
+    .chat-bubble-in { border-bottom-left-radius: 6px; }
+    .chat-sender { font-size: 12px; }
+    .chat-time { font-size: 11px; margin-top: 6px; }
+
+    .chat-input-area {
+        padding-top: 10px;
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    #quill-editor {
+        border-radius: 14px;
+    }
+    #quill-editor .ql-editor {
+        font-size: 16px;
+        padding: 12px 14px;
+        min-height: 44px;
+    }
+    #quill-editor .ql-toolbar {
+        padding: 8px 10px;
+    }
+    #quill-editor .ql-toolbar button {
+        width: 32px;
+        height: 32px;
+    }
+
+    .btn-send {
+        min-width: auto;
+        width: 100% !important;
+        padding: 14px 24px;
+        font-size: 16px;
+        min-height: 48px;
+        border-radius: 14px;
+    }
+
+    /* ── Settings cards ── */
+    .settings-card {
+        padding: 18px;
+        border-radius: 14px;
+        margin-bottom: 14px;
+    }
+    .settings-card .settings-card-header {
+        gap: 12px;
+        font-size: 15px;
+        margin-bottom: 10px;
+    }
+    .settings-card .settings-card-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        font-size: 20px;
+    }
+    .settings-card .settings-card-desc {
+        font-size: 13px;
+        margin-bottom: 12px;
+    }
+    .settings-card select.input {
+        font-size: 16px !important;
+        min-height: 48px;
+    }
+    .settings-card label {
+        font-size: 15px;
+        gap: 12px;
+        padding: 8px 0;
+    }
+    .settings-card input[type="checkbox"] {
+        width: 22px;
+        height: 22px;
+    }
+
+    /* ── Team ── */
+    .invite-card {
+        padding: 18px;
+        border-radius: 14px;
+    }
+    .invite-card .card-title { font-size: 15px; }
+    .invite-link-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+    .invite-link-row .input {
+        font-size: 14px !important;
+    }
+    .invite-link-row .btn { width: 100%; }
+    .invite-hint { font-size: 13px; }
+
+    .member-item {
+        padding: 14px 0;
+        gap: 14px;
+    }
+    .member-avatar {
+        width: 44px;
+        height: 44px;
+        font-size: 22px;
+    }
+    .member-name { font-size: 15px; }
+    .member-meta { font-size: 13px; }
+    .member-item .btn-sm,
+    .member-item .btn {
+        min-width: 44px;
+        min-height: 44px;
+        font-size: 18px;
+    }
+
+    /* ── Pricing ── */
+    .pricing-table { border-radius: 14px; }
+    .pricing-row {
+        padding: 14px 16px;
+        font-size: 15px;
+    }
+    .pricing-row .pricing-label { font-size: 14px; }
+    .pricing-row .pricing-value { font-size: 15px; }
+    .pricing-total { padding: 16px; }
+    .pricing-total .pricing-value { font-size: 22px; }
+
+    .invoice-item { padding: 14px 0; gap: 14px; }
+    .invoice-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        font-size: 22px;
+    }
+    .invoice-amount { font-size: 16px; }
+    .invoice-meta { font-size: 13px; }
+    .invoice-item .btn-sm,
+    .invoice-item .btn {
+        padding: 10px 18px;
+        min-height: 44px;
+        font-size: 14px;
+    }
+
+    /* ── Info banners ── */
+    .info-banner {
+        padding: 14px;
+        border-radius: 14px;
+        font-size: 14px;
+        gap: 10px;
+    }
+    .info-banner .info-banner-icon { font-size: 22px; }
+
+    /* ── Dropdown menus — full width bottom sheet ── */
+    .dropdown-menu {
+        position: fixed !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        top: auto !important;
+        border-radius: 20px 20px 0 0;
+        padding: 8px 8px;
+        padding-bottom: max(12px, env(safe-area-inset-bottom));
+        margin: 0 !important;
+        z-index: 9001 !important;
+        box-shadow: 0 -8px 32px rgba(0,0,0,.15);
+        animation: modalSlideUp .25s ease;
+        max-height: 70vh;
+        overflow-y: auto;
+    }
+    .dropdown-menu button {
+        padding: 14px 18px;
+        font-size: 16px;
+        min-height: 48px;
+        border-radius: 12px;
+    }
+
+    /* ── Empty states ── */
+    .empty { padding: 32px 20px; }
+    .empty-icon { font-size: 56px; }
+    .empty p { font-size: 15px; }
+
+    /* ── Toast — full width ── */
+    .toast-container {
+        left: 12px;
+        right: 12px;
+        max-width: none;
+    }
+    .toast {
+        padding: 14px 18px;
+        font-size: 15px;
+        border-radius: 14px;
+    }
+
+    /* ── Loading ── */
+    .loading { padding: 32px; font-size: 15px; }
+
+    /* ── Disable hover effects for touch ── */
+    .term-row:hover,
+    .file-item:hover,
+    .stat:hover,
+    .card:hover {
+        background: inherit;
+        box-shadow: var(--shadow-sm);
+        transform: none;
+    }
+
+    /* ── Sortable ghost — mobile ── */
+    .sortable-ghost {
+        opacity: 0.5;
+        transform: scale(1.02);
+    }
+
+    /* ── Footer ── */
+    footer {
+        padding-bottom: max(16px, env(safe-area-inset-bottom)) !important;
+    }
+
+    /* ── Instruction cards — mobile-friendly ── */
+    .instruction-card {
+        padding: 14px;
+        border-radius: 12px;
+        gap: 10px;
+    }
+    .instruction-card .btn-icon {
+        min-width: 44px;
+        min-height: 44px;
+    }
+    .instruction-title { font-size: 14px; }
+    .instruction-preview,
+    .instruction-text { font-size: 13px; }
+    .instruction-handle {
+        padding: 6px;
+        font-size: 16px;
+    }
+    .instruction-order {
+        width: 26px;
+        height: 26px;
+        font-size: 13px;
+    }
+    .instruction-actions { gap: 4px; }
+    .instructions-stats {
+        gap: 8px;
+    }
+    .stat-item {
+        padding: 14px 10px;
+    }
+    .stat-item .stat-value { font-size: 20px; }
+
+    .instructions-dropzone {
+        min-height: 120px;
+        padding: 12px;
+    }
+    .instructions-preview {
+        padding: 14px;
+    }
+    .preview-actions {
+        flex-direction: column;
+        gap: 8px;
+    }
+    .preview-actions .btn-sm {
+        width: 100%;
+    }
+
+    .prompt-preview-content {
+        max-height: 180px;
+        padding: 12px;
+    }
+    .prompt-text { font-size: 12px; }
+
+    /* ── Diff table — mobile ── */
+    .diff-header, .diff-row {
+        grid-template-columns: 1fr;
+        gap: 4px;
+        font-size: 13px;
+    }
+
+    /* ── Timeline — mobile ── */
+    .timeline { padding-left: 20px; }
+    .timeline-item { padding: 12px 14px; }
+    .timeline-title { font-size: 14px; }
+    .timeline-actions {
+        flex-direction: column;
+        gap: 8px;
+    }
+    .timeline-actions .btn-sm { width: 100%; }
+
+    /* ── Search results ── */
+    .search-result-item { padding: 14px; }
+    .search-result-content {
+        flex-direction: column;
+        gap: 8px;
+    }
+    .search-result-meta {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    /* ── Scrollbar — hide on mobile ── */
+    ::-webkit-scrollbar { display: none; }
+    * { scrollbar-width: none; }
+
+    /* ── Safe area bottom padding on fixed elements ── */
+    .batch-bar {
+        padding-bottom: max(14px, env(safe-area-inset-bottom));
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   📱 Small phones (iPhone SE, narrow devices)
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 380px) {
+    #content { padding: 8px 10px 100px; }
+    #header { padding: 8px 10px 0; }
+    #nav { padding-left: 10px; padding-right: 10px; margin: 0 -10px; }
+
+    .nav-btn {
+        padding: 8px 12px;
+        font-size: 12px;
+        min-height: 40px;
+    }
+
+    .card { padding: 14px; }
+    .section-header h2 { font-size: 15px; }
+
+    .btn { padding: 12px 16px; font-size: 15px; min-height: 44px; }
+    .btn-sm { padding: 10px 14px; font-size: 13px; min-height: 40px; }
+
+    .stat-value { font-size: 18px; }
+    .stats { gap: 6px; }
+
+    .term-action button {
+        padding: 8px 14px;
+        font-size: 13px;
+        min-height: 40px;
+    }
+
+    .modal { padding: 20px 16px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   End Mobile UX Overhaul 📱
    ═══════════════════════════════════════════════════════════════ */

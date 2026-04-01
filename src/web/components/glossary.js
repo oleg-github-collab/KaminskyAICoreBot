@@ -439,18 +439,36 @@ const GlossaryView = {
         const menu = document.getElementById('export-menu');
         if (!menu) return;
 
-        menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-
-        // Close menu when clicking outside
-        if (menu.style.display === 'block') {
-            const closeMenu = (e) => {
-                if (!menu.contains(e.target)) {
-                    menu.style.display = 'none';
-                    document.removeEventListener('click', closeMenu);
-                }
-            };
-            setTimeout(() => document.addEventListener('click', closeMenu), 0);
+        const isOpen = menu.style.display !== 'none';
+        if (isOpen) {
+            menu.style.display = 'none';
+            const backdrop = document.getElementById('dropdown-backdrop');
+            if (backdrop) backdrop.remove();
+            return;
         }
+
+        menu.style.display = 'block';
+
+        // Add backdrop overlay for mobile
+        const backdrop = document.createElement('div');
+        backdrop.id = 'dropdown-backdrop';
+        backdrop.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.3);';
+        document.body.appendChild(backdrop);
+
+        const closeMenu = () => {
+            menu.style.display = 'none';
+            backdrop.remove();
+            document.removeEventListener('click', closeMenuHandler);
+        };
+        const closeMenuHandler = (e) => {
+            if (!menu.contains(e.target)) closeMenu();
+        };
+        backdrop.addEventListener('click', closeMenu);
+        // Also close after clicking a menu item
+        menu.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('click', closeMenu, { once: true });
+        });
+        setTimeout(() => document.addEventListener('click', closeMenuHandler), 0);
     },
 
     async exportCSV(pid) {

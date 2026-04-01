@@ -16,10 +16,10 @@ const MessagesView = {
         c.innerHTML = `
             <div class="chat-container">
                 <div class="chat-header" style="display:flex;align-items:center;gap:10px">
-                    <button style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--bg);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center" onclick="App.backToProjects()">\u2190</button>
-                    <div style="flex:1">
-                        <h2 style="font-size:15px;margin:0;font-weight:600">${App.esc(project.name)}</h2>
-                        <div id="connection-status" style="font-size:11px;color:var(--hint)">\ud83d\udfe1 Підключення...</div>
+                    <button class="back-btn" onclick="App.backToProjects()">\u2190</button>
+                    <div style="flex:1;min-width:0">
+                        <h2 style="font-size:16px;margin:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${App.esc(project.name)}</h2>
+                        <div id="connection-status" style="font-size:12px;color:var(--hint)">\ud83d\udfe1 Підключення...</div>
                     </div>
                 </div>
                 <div id="messages-list" class="chat-messages"><div class="loading">Завантаження...</div></div>
@@ -31,7 +31,7 @@ const MessagesView = {
                     </div>
                 </div>
                 <div class="chat-input-area" style="flex-direction:column;align-items:stretch">
-                    <div id="quill-editor" style="min-height:60px;background:var(--bg2);border-radius:8px;margin-bottom:8px"></div>
+                    <div id="quill-editor" style="min-height:50px;background:var(--bg2);margin-bottom:8px"></div>
                     <button class="btn btn-primary btn-send" id="send-btn" onclick="MessagesView.send(${project.id})">
                         <span class="btn-text">Надіслати</span>
                         <span class="btn-spinner" style="display:none">

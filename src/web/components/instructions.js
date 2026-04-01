@@ -673,5 +673,44 @@ instructionsStyle.textContent = `
             grid-template-columns: 1fr;
         }
     }
+
+    @media (max-width: 767px) {
+        .instructions-library,
+        .instructions-workspace {
+            padding: 14px;
+            border-radius: 14px;
+        }
+        .instructions-zones { gap: 14px; }
+        .instruction-card {
+            padding: 14px;
+            gap: 10px;
+        }
+        .instruction-card .btn-icon {
+            min-width: 44px;
+            min-height: 44px;
+            font-size: 18px;
+        }
+        .instruction-handle {
+            padding: 8px;
+            font-size: 18px;
+        }
+        .instructions-dropzone {
+            min-height: 100px;
+            padding: 12px;
+        }
+        .preview-actions {
+            flex-direction: column;
+        }
+        .preview-actions .btn {
+            width: 100%;
+        }
+        .instructions-stats { gap: 8px; }
+        .stat-item { padding: 14px 8px; }
+        .library-search .search-input {
+            font-size: 16px !important;
+            min-height: 48px;
+            padding: 14px;
+        }
+    }
 `;
 document.head.appendChild(instructionsStyle);

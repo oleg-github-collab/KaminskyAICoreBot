@@ -95,7 +95,7 @@ const FilesView = {
             list.innerHTML = files.map(f => `
                 <div class="file-item">
                     <div class="file-icon">${this.icon(f.category)}</div>
-                    <div class="file-info" style="flex:1">
+                    <div class="file-info">
                         <div class="file-name">${App.esc(f.original_name)}</div>
                         <div class="file-meta">
                             ${App.esc(f.category)} \u00b7 ${App.fmtSize(f.file_size)}
@@ -104,14 +104,14 @@ const FilesView = {
                             ${f.estimated_price_cents ? ' \u00b7 \u20ac' + App.fmtEuro(f.estimated_price_cents) : ''}
                         </div>
                     </div>
-                    <div style="display:flex;gap:4px">
-                        <button class="btn btn-secondary btn-sm"
+                    <div class="file-actions">
+                        <button class="btn btn-icon btn-secondary"
                                 onclick="FileViewer.show(${pid}, ${f.id}, '${App.esc(f.original_name).replace(/'/g, "\\'")}')"
                                 data-tooltip="Переглянути">
                             \ud83d\udc41\ufe0f
                         </button>
-                        <button class="btn btn-sm"
-                                style="color:var(--red)"
+                        <button class="btn btn-icon"
+                                style="color:var(--red);background:var(--red-bg)"
                                 onclick="FilesView.deleteFile(${pid},${f.id},'${App.esc(f.original_name).replace(/'/g, "\\'")}')"
                                 data-tooltip="Видалити">
                             \u2715

@@ -14,7 +14,7 @@ const TeamView = {
                     <span>\ud83d\udd17</span> Запросити учасника
                 </div>
                 <div id="invite-area">
-                    <button class="btn btn-primary btn-sm" onclick="TeamView.generateLink(${project.id})">Отримати посилання</button>
+                    <button class="btn btn-primary" onclick="TeamView.generateLink(${project.id})">\ud83d\udd17 Отримати посилання</button>
                 </div>
             </div>
             <div id="team-list"><div class="loading">Завантаження...</div></div>`;
@@ -57,8 +57,8 @@ const TeamView = {
                         </div>
                     </div>
                     ${m.role !== 'owner'
-                        ? `<button class="btn btn-sm" style="color:var(--red);width:auto" onclick="TeamView.removeMember(${pid},${m.id},'${App.esc(m.first_name || 'учасника').replace(/'/g, "\\'")}')" data-tooltip="Видалити">\u2715</button>`
-                        : '<span class="card-badge" style="font-size:11px">Власник</span>'}
+                        ? `<button class="btn btn-icon btn-sm" style="color:var(--red);background:var(--red-bg)" onclick="TeamView.removeMember(${pid},${m.id},'${App.esc(m.first_name || 'учасника').replace(/'/g, "\\'")}')" data-tooltip="Видалити">\u2715</button>`
+                        : '<span class="card-badge">Власник</span>'}
                 </div>
             `).join('');
         } catch (e) {
