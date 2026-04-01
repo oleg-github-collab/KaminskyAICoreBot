@@ -2159,17 +2159,24 @@ select:focus-visible {
 .pdf-page-label {
     font-size: 11px; color: var(--hint); margin-bottom: 8px;
 }
-/* Text layer — invisible selectable text over canvas for commenting */
+/* Text layer — selectable text over canvas (from pdf.js official styles) */
 .pdf-text-layer {
-    position: absolute; left: 0; top: 0; right: 0; bottom: 0;
-    overflow: hidden; line-height: 1.0; z-index: 1;
+    position: absolute; text-align: initial;
+    inset: 0; overflow: hidden;
+    opacity: 0.25; line-height: 1;
+    -webkit-text-size-adjust: none;
+    -moz-text-size-adjust: none;
+    text-size-adjust: none;
+    forced-color-adjust: none;
+    transform-origin: 0 0;
+    z-index: 2;
 }
-.pdf-text-layer > span {
+.pdf-text-layer :is(span, br) {
     color: transparent; position: absolute; white-space: pre;
-    transform-origin: 0% 0%; cursor: text;
+    cursor: text; transform-origin: 0% 0%;
 }
-.pdf-text-layer > span::selection { background: rgba(102, 126, 234, 0.35); }
-.pdf-text-layer > br { display: none; }
+.pdf-text-layer ::selection { background: rgba(102, 126, 234, 0.6); }
+.pdf-text-layer .highlight { margin: -1px; padding: 1px; background: rgba(180, 0, 170, 1); border-radius: 4px; }
 
 /* Native DOCX rendering (docx-preview) */
 .docx-native-wrapper {

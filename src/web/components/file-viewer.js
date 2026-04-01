@@ -40,6 +40,10 @@ const FileViewer = {
 
     async _ensureDocxPreview() {
         if (window.docx) return;
+        // docx-preview requires jszip (DOCX files are ZIP archives)
+        if (!window.JSZip) {
+            await this._loadScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
+        }
         await this._loadScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.3/dist/docx-preview.min.js');
     },
 
@@ -89,14 +93,15 @@ const FileViewer = {
 
             await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
 
-            // Text layer — transparent selectable text over canvas
+            // Text layer — transparent selectable text over canvas for commenting
             try {
                 const textContent = await page.getTextContent();
                 const textLayerDiv = document.createElement('div');
                 textLayerDiv.className = 'pdf-text-layer';
+                textLayerDiv.style.setProperty('--scale-factor', scale);
                 pageWrap.appendChild(textLayerDiv);
                 const task = pdfjsLib.renderTextLayer({
-                    textContent: textContent,
+                    textContentSource: textContent,
                     container: textLayerDiv,
                     viewport: viewport,
                     textDivs: []
