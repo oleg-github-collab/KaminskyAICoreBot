@@ -1,5 +1,5 @@
 # ==== Stage 1: Build ====
-# FORCE REBUILD: 2026-03-31-12:30-all-routes-fixed
+# FORCE REBUILD: 2026-04-01-comments-migration-fix
 FROM ubuntu:22.04 AS builder
 
 ARG ZIG_VERSION=0.14.0

@@ -10,4 +10,4 @@ ALTER TABLE comments ADD COLUMN suggestion_status TEXT DEFAULT 'pending';
 
 CREATE INDEX IF NOT EXISTS idx_comments_file_offsets
     ON comments(project_id, resource_type, resource_id, start_offset)
-    WHERE start_offset IS NOT NULL
+    WHERE start_offset IS NOT NULL;

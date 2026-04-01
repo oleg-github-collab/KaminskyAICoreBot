@@ -2215,7 +2215,6 @@ pub fn handleUpdateInstructions(req: *httpz.Request, res: *httpz.Response) !void
 pub fn handleGetComments(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const access = parseProjectAccess(req, res, user) orelse return;
-    _ = user;
     const a = app();
 
     const query = try req.query();
@@ -2397,7 +2396,6 @@ pub fn handleCreateComment(req: *httpz.Request, res: *httpz.Response) !void {
 pub fn handleDeleteComment(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const access = parseProjectAccess(req, res, user) orelse return;
-    _ = user;
     const a = app();
 
     const comment_id = parseIntParam(req, "comment_id") catch {
@@ -2421,7 +2419,6 @@ pub fn handleDeleteComment(req: *httpz.Request, res: *httpz.Response) !void {
 pub fn handleAcceptSuggestion(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const access = parseProjectAccess(req, res, user) orelse return;
-    _ = user;
     const a = app();
 
     const comment_id = parseIntParam(req, "comment_id") catch {
@@ -2445,7 +2442,6 @@ pub fn handleAcceptSuggestion(req: *httpz.Request, res: *httpz.Response) !void {
 pub fn handleRejectSuggestion(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const access = parseProjectAccess(req, res, user) orelse return;
-    _ = user;
     const a = app();
 
     const comment_id = parseIntParam(req, "comment_id") catch {
@@ -2469,7 +2465,6 @@ pub fn handleRejectSuggestion(req: *httpz.Request, res: *httpz.Response) !void {
 pub fn handleGetFilePair(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const access = parseProjectAccess(req, res, user) orelse return;
-    _ = user;
     const a = app();
 
     const file_id = parseIntParam(req, "file_id") catch {
