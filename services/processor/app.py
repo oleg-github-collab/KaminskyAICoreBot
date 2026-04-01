@@ -1,6 +1,7 @@
 """Python Processor Microservice — FastAPI application.
 
-Provides accurate document counting, DeepL SDK integration, and GPT-5.4-nano AI services.
+Provides accurate document counting, text/table/metadata extraction,
+DeepL SDK integration, and AI services.
 Authenticated via INTERNAL_API_KEY bearer token.
 """
 
@@ -15,6 +16,7 @@ from fastapi.responses import JSONResponse, Response
 import counter
 import deepl_service
 import ai_service
+import document_engine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -36,7 +38,7 @@ def verify_auth(authorization: str = Header(default="")):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "processor"}
+    return {"status": "ok", "service": "processor", "version": "2.0"}
 
 
 # ─── Document Counting ───────────────────────────────────────────────────────
@@ -51,6 +53,103 @@ async def count_document(
     filename = file.filename or "unknown"
     result = counter.count_file(file_bytes, filename)
     return result
+
+
+# ─── Text Extraction (powered by document_engine) ────────────────────────────
+
+@app.post("/extract-text")
+async def extract_text(
+    file: UploadFile = File(...),
+    authorization: str = Header(default=""),
+):
+    """Extract text from any supported document format.
+
+    Supports: PDF, DOCX, DOC, XLSX, XLS, PPTX, RTF, ODT, ODS, ODP,
+              HTML, EPUB, images (OCR), TXT, CSV, JSON, XML, and more.
+    """
+    verify_auth(authorization)
+    file_bytes = await file.read()
+    filename = file.filename or "unknown"
+
+    try:
+        result = document_engine.extract_text(file_bytes, filename)
+        return result
+    except Exception as e:
+        logger.error(f"Text extraction failed for {filename}: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to extract text: {str(e)}")
+
+
+# ─── Metadata Extraction ─────────────────────────────────────────────────────
+
+@app.post("/extract-metadata")
+async def extract_metadata(
+    file: UploadFile = File(...),
+    authorization: str = Header(default=""),
+):
+    """Extract document metadata (author, title, dates, pages, language)."""
+    verify_auth(authorization)
+    file_bytes = await file.read()
+    filename = file.filename or "unknown"
+
+    try:
+        result = document_engine.extract_metadata(file_bytes, filename)
+        return result
+    except Exception as e:
+        logger.error(f"Metadata extraction failed for {filename}: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to extract metadata: {str(e)}")
+
+
+# ─── Table Extraction ────────────────────────────────────────────────────────
+
+@app.post("/extract-tables")
+async def extract_tables(
+    file: UploadFile = File(...),
+    authorization: str = Header(default=""),
+):
+    """Extract tables from PDF, DOCX, XLSX, PPTX."""
+    verify_auth(authorization)
+    file_bytes = await file.read()
+    filename = file.filename or "unknown"
+
+    try:
+        result = document_engine.extract_tables(file_bytes, filename)
+        return result
+    except Exception as e:
+        logger.error(f"Table extraction failed for {filename}: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to extract tables: {str(e)}")
+
+
+# ─── OCR ──────────────────────────────────────────────────────────────────────
+
+@app.post("/ocr")
+async def ocr_image(
+    file: UploadFile = File(...),
+    lang: str = Form("ukr+deu+eng+rus+pol"),
+    authorization: str = Header(default=""),
+):
+    """OCR: extract text from image or scanned PDF via Tesseract."""
+    verify_auth(authorization)
+    file_bytes = await file.read()
+    filename = file.filename or "unknown"
+    ext = os.path.splitext(filename.lower())[1].lstrip(".")
+
+    try:
+        if ext == "pdf":
+            # Scanned PDF → pdf2image → tesseract
+            text = document_engine._ocr_pdf(file_bytes)
+            if text:
+                return {"text": text, "length": len(text), "method": "ocr_pdf", "format": "pdf"}
+            raise HTTPException(status_code=400, detail="OCR produced no text")
+        elif ext in ("png", "jpg", "jpeg", "tiff", "tif", "bmp", "webp"):
+            result = document_engine._extract_image_ocr(file_bytes, filename)
+            return result
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported format for OCR: {ext}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"OCR failed for {filename}: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"OCR failed: {str(e)}")
 
 
 # ─── DeepL Text Translation ─────────────────────────────────────────────────
@@ -207,59 +306,6 @@ async def voice_estimate(request: Request, authorization: str = Header(default="
         text=body["text"],
         language=body.get("language", "uk"),
     )
-
-
-# ─── Text Extraction ─────────────────────────────────────────────────────────
-
-@app.post("/extract-text")
-async def extract_text(
-    file: UploadFile = File(...),
-    authorization: str = Header(default=""),
-):
-    """Extract text content from PDF, DOCX, or TXT files for document quoting."""
-    verify_auth(authorization)
-    file_bytes = await file.read()
-    filename = file.filename or "unknown"
-
-    # Determine file type from extension
-    ext = filename.lower().split('.')[-1] if '.' in filename else ''
-
-    try:
-        if ext == 'pdf':
-            # Extract text from PDF
-            import PyPDF2
-            pdf_file = io.BytesIO(file_bytes)
-            reader = PyPDF2.PdfReader(pdf_file)
-            text_parts = []
-            for page in reader.pages:
-                text_parts.append(page.extract_text() or '')
-            text = '\n\n'.join(text_parts)
-
-        elif ext in ['docx', 'doc']:
-            # Extract text from DOCX
-            import docx
-            doc_file = io.BytesIO(file_bytes)
-            doc = docx.Document(doc_file)
-            text_parts = [para.text for para in doc.paragraphs]
-            text = '\n\n'.join(text_parts)
-
-        elif ext in ['txt', 'text']:
-            # Plain text
-            text = file_bytes.decode('utf-8', errors='ignore')
-
-        else:
-            # Unsupported format, try as text
-            text = file_bytes.decode('utf-8', errors='ignore')
-
-        # Limit to 100k chars for safety
-        if len(text) > 100000:
-            text = text[:100000] + "\n\n[... текст обрізано ...]"
-
-        return {"text": text, "length": len(text)}
-
-    except Exception as e:
-        logger.error(f"Text extraction failed for {filename}: {e}")
-        raise HTTPException(status_code=400, detail=f"Failed to extract text: {str(e)}")
 
 
 # ─── Error Handler ───────────────────────────────────────────────────────────
