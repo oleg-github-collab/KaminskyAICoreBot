@@ -733,6 +733,21 @@ select.input { appearance: auto; }
 .timeline-badges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .timeline-actions { display: flex; gap: 8px; margin-top: 10px; }
 
+/* ── Diff panel ── */
+.diff-panel { margin-top: 20px; }
+.diff-panel-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px;
+}
+.diff-panel-header h3 { font-size: 16px; font-weight: 700; margin: 0; }
+.diff-stats-bar {
+    background: var(--bg2); border-radius: var(--radius);
+    padding: 12px 16px; margin-bottom: 12px;
+}
+.diff-stats-label { font-size: 13px; color: var(--hint); margin-bottom: 8px; }
+.diff-stats-badges { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.diff-cell-label { display: none; }
+
 /* ── Chat / Messenger ── */
 .chat-container {
     display: flex; flex-direction: column;
@@ -2811,10 +2826,21 @@ select:focus-visible {
     .prompt-text { font-size: 12px; }
 
     /* ── Diff table — mobile ── */
-    .diff-header, .diff-row {
+    .diff-header { display: none; }
+    .diff-row {
         grid-template-columns: 1fr;
-        gap: 4px;
+        gap: 6px;
         font-size: 13px;
+        padding: 12px 14px;
+    }
+    .diff-cell-label {
+        display: inline;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--hint);
+        text-transform: uppercase;
+        letter-spacing: .03em;
+        margin-right: 6px;
     }
 
     /* ── Timeline — mobile ── */

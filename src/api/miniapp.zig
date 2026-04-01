@@ -899,24 +899,38 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
 
     // Extract text content for quoting (source/reference files only)
     if (std.mem.eql(u8, category, "source") or std.mem.eql(u8, category, "reference")) {
-        if (processor_client.extractText(a.allocator, &a.config, store_path, original_name)) |text_content| {
-            defer a.allocator.free(text_content);
-
-            // Store in document_content table
+        if (pricing.isTextContent(file_field.value)) {
+            // Text files: store raw content directly (no processor needed)
             var content_stmt = try a.db.prepare(
-                "INSERT INTO document_content (file_id, content_text, extracted_at, extraction_method) VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO document_content (file_id, content_text, extracted_at, extraction_method) VALUES (?, ?, ?, ?)",
             );
             defer content_stmt.deinit();
             try content_stmt.bindInt(1, file_id);
-            try content_stmt.bindText(2, text_content);
+            try content_stmt.bindText(2, file_field.value);
             try content_stmt.bindInt(3, std.time.timestamp());
-            try content_stmt.bindText(4, "python_processor");
+            try content_stmt.bindText(4, "inline_text");
             try content_stmt.exec();
 
-            std.log.info("Extracted {d} chars from file_id={d} ({s})", .{ text_content.len, file_id, original_name });
-        } else |err| {
-            std.log.warn("Text extraction failed for file_id={d} ({s}): {any}", .{ file_id, original_name, err });
-            // Don't fail the upload, just skip text extraction
+            std.log.info("Stored inline text {d} chars for file_id={d} ({s})", .{ file_field.value.len, file_id, original_name });
+        } else {
+            // Binary files (PDF, DOCX): try Python processor
+            if (processor_client.extractText(a.allocator, &a.config, store_path, original_name)) |text_content| {
+                defer a.allocator.free(text_content);
+
+                var content_stmt = try a.db.prepare(
+                    "INSERT OR REPLACE INTO document_content (file_id, content_text, extracted_at, extraction_method) VALUES (?, ?, ?, ?)",
+                );
+                defer content_stmt.deinit();
+                try content_stmt.bindInt(1, file_id);
+                try content_stmt.bindText(2, text_content);
+                try content_stmt.bindInt(3, std.time.timestamp());
+                try content_stmt.bindText(4, "python_processor");
+                try content_stmt.exec();
+
+                std.log.info("Extracted {d} chars from file_id={d} ({s})", .{ text_content.len, file_id, original_name });
+            } else |err| {
+                std.log.warn("Text extraction failed for file_id={d} ({s}): {any}", .{ file_id, original_name, err });
+            }
         }
     }
 

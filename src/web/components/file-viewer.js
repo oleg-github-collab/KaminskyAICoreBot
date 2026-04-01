@@ -20,7 +20,7 @@ const FileViewer = {
                 </div>
                 <div class="file-viewer-footer">
                     <p style="font-size:13px;color:var(--hint);margin:0">
-                        💡 Виділіть текст мишкою, щоб процитувати його в повідомленні
+                        💡 Виділіть текст, щоб скопіювати цитату
                     </p>
                 </div>
             </div>`;
@@ -49,9 +49,11 @@ const FileViewer = {
         } catch (e) {
             document.getElementById('file-content').innerHTML = `
                 <div class="empty">
-                    <p style="color:var(--red)">Помилка: ${App.esc(e.message)}</p>
+                    <div class="empty-icon">📄</div>
+                    <p>Текст недоступний</p>
                     <p style="font-size:13px;color:var(--hint);margin-top:8px">
-                        Можливо, текст ще не витягнуто з файлу. Спробуйте завантажити файл знову.
+                        Файл ще обробляється або текст недоступний для цього формату.
+                        Спробуйте завантажити файл знову.
                     </p>
                 </div>`;
         }
@@ -100,8 +102,8 @@ const FileViewer = {
         tooltip.style.top = `${rect.bottom + 5}px`;
         tooltip.style.left = `${rect.left}px`;
         tooltip.innerHTML = `
-            <button class="btn btn-sm btn-primary" onclick="FileViewer.insertQuote('${selectedText.replace(/'/g, "\\'")}')">
-                📌 Вставити цитату
+            <button class="btn btn-sm btn-primary" onclick="FileViewer.copyQuote()">
+                📋 Копіювати цитату
             </button>`;
         document.body.appendChild(tooltip);
 
@@ -109,35 +111,33 @@ const FileViewer = {
         setTimeout(() => tooltip.remove(), 5000);
     },
 
-    insertQuote(selectedText) {
+    copyQuote() {
+        const selection = window.getSelection();
+        const selectedText = selection.toString().trim();
+
         // Remove tooltip
         document.querySelectorAll('.quote-tooltip').forEach(t => t.remove());
 
-        // Close viewer
-        document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
-
-        // Insert into Quill editor if available
-        if (MessagesView && MessagesView.quill) {
-            const quill = MessagesView.quill;
-            const cursorPos = quill.getSelection()?.index || quill.getLength();
-
-            // Insert blockquote with file reference
-            const quoteHtml = `
-                <blockquote style="border-left:4px solid var(--btn);padding-left:12px;margin:8px 0;font-style:italic;color:var(--text)">
-                    ${selectedText}
-                    <footer style="margin-top:4px;font-size:12px;color:var(--hint);font-style:normal">
-                        — ${this.currentFileName}
-                    </footer>
-                </blockquote>
-            `;
-
-            // Insert at cursor position
-            quill.clipboard.dangerouslyPasteHTML(cursorPos, quoteHtml);
-            quill.setSelection(cursorPos + selectedText.length + 50);
-
-            App.toast('Цитату додано до повідомлення', 'success');
-        } else {
-            App.toast('Відкрийте вкладку "Повідомлення" щоб вставити цитату', 'warning');
+        if (!selectedText) {
+            App.toast('Спочатку виділіть текст', 'warning');
+            return;
         }
+
+        const quoteText = `«${selectedText}»\n— ${this.currentFileName}`;
+
+        navigator.clipboard.writeText(quoteText).then(() => {
+            App.toast('Цитату скопійовано', 'success');
+        }).catch(() => {
+            // Fallback for older browsers
+            const ta = document.createElement('textarea');
+            ta.value = quoteText;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+            App.toast('Цитату скопійовано', 'success');
+        });
     }
 };

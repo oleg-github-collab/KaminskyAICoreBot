@@ -125,7 +125,7 @@ const App = {
             // Alt + 1-8 → Navigate between views
             if (e.altKey && e.key >= '1' && e.key <= '8') {
                 e.preventDefault();
-                const views = ['projects', 'files', 'glossary', 'messages', 'instructions', 'pricing', 'versions', 'team', 'settings'];
+                const views = ['projects', 'files', 'glossary', 'instructions', 'pricing', 'versions', 'team', 'settings'];
                 const index = parseInt(e.key) - 1;
                 if (views[index]) {
                     this.navigate(views[index]);
@@ -177,7 +177,6 @@ const App = {
             { id: 'projects', label: 'Проєкти', icon: '📁' },
             { id: 'files', label: 'Файли', icon: '📄' },
             { id: 'glossary', label: 'Глосарій', icon: '📋' },
-            { id: 'messages', label: 'Чат', icon: '💬' },
             { id: 'instructions', label: 'Інструкції', icon: '📝' },
             { id: 'pricing', label: 'Вартість', icon: '💰' },
             { id: 'versions', label: 'Версії', icon: '📊' },
@@ -207,7 +206,6 @@ const App = {
             case 'settings': SettingsView.render(c, this.currentProject); break;
             case 'team': TeamView.render(c, this.currentProject); break;
             case 'pricing': PricingView.render(c, this.currentProject); break;
-            case 'messages': MessagesView.render(c, this.currentProject); break;
         }
     },
 

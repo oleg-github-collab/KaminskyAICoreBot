@@ -1,15 +1,18 @@
 const GlossaryVersionsView = {
     async render(c, project) {
         if (!project) {
-            c.innerHTML = '<div class="empty"><div class="empty-icon">📊</div><p>Оберіть проєкт</p></div>';
+            c.innerHTML = '<div class="empty"><div class="empty-icon">📊</div><p>Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
             return;
         }
         c.innerHTML = `
-            <h2 style="font-size:16px;margin-bottom:12px">${App.esc(project.name)} — Версії глосарію</h2>
+            <div class="section-header">
+                <button class="back-btn" onclick="App.backToProjects()">←</button>
+                <h2>${App.esc(project.name)} — Версії глосарію</h2>
+            </div>
             <div id="versions-list"><div class="loading">Завантаження...</div></div>
-            <div id="diff-panel" style="display:none;margin-top:20px">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-                    <h3 style="font-size:16px;font-weight:700;margin:0">Порівняння версій</h3>
+            <div id="diff-panel" class="diff-panel" style="display:none">
+                <div class="diff-panel-header">
+                    <h3>Порівняння версій</h3>
                     <button class="btn btn-secondary btn-sm" onclick="GlossaryVersionsView.closeDiff()">✕ Закрити</button>
                 </div>
                 <div id="diff-content"></div>
@@ -25,18 +28,24 @@ const GlossaryVersionsView = {
             const versions = data.versions || [];
 
             if (!versions.length) {
-                list.innerHTML = '<div class="empty" style="padding:20px"><p>Ще немає версій глосарію</p></div>';
+                list.innerHTML = `
+                    <div class="empty" style="padding:32px">
+                        <div class="empty-icon">📊</div>
+                        <p>Ще немає версій глосарію</p>
+                        <p style="font-size:13px;color:var(--hint);margin-top:8px">
+                            Версії створюються автоматично при зміні глосарію
+                        </p>
+                    </div>`;
                 return;
             }
 
-            // Timeline UI
             list.innerHTML = '<div class="timeline">' + versions.map((v, i) => {
                 const isCurrent = i === 0;
                 const itemClass = isCurrent ? 'timeline-item current' : 'timeline-item';
                 return `
                     <div class="${itemClass}">
                         <div class="timeline-header">
-                            <div class="timeline-title">Версія ${v.version_number}${isCurrent ? ' (поточна)' : ''}</div>
+                            <div class="timeline-title">Версія ${v.version_number}${isCurrent ? ' <span class="card-badge" style="font-size:11px">поточна</span>' : ''}</div>
                             <div class="timeline-date">${App.fmtDate(v.created_at)}</div>
                         </div>
                         ${v.change_summary ? `<div class="timeline-summary">${App.esc(v.change_summary)}</div>` : ''}
@@ -58,7 +67,7 @@ const GlossaryVersionsView = {
                     </div>`;
             }).join('') + '</div>';
         } catch (e) {
-            list.innerHTML = `<p style="color:var(--hint)">Помилка: ${App.esc(e.message)}</p>`;
+            list.innerHTML = `<div class="empty"><p style="color:var(--hint)">Помилка: ${App.esc(e.message)}</p></div>`;
         }
     },
 
@@ -67,9 +76,8 @@ const GlossaryVersionsView = {
         const content = document.getElementById('diff-content');
         if (!panel || !content) return;
 
-        // Scroll to diff panel
-        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
         panel.style.display = 'block';
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
         content.innerHTML = '<div class="loading">Обчислення різниці...</div>';
 
         try {
@@ -77,7 +85,7 @@ const GlossaryVersionsView = {
             const changes = data.changes || [];
 
             if (!changes.length) {
-                content.innerHTML = '<div class="empty" style="padding:16px"><p>Немає змін між версіями</p></div>';
+                content.innerHTML = '<div class="empty" style="padding:16px"><div class="empty-icon">✓</div><p>Немає змін між версіями</p></div>';
                 return;
             }
 
@@ -85,25 +93,24 @@ const GlossaryVersionsView = {
             changes.forEach(c => stats[c.type]++);
 
             content.innerHTML = `
-                <div style="background:var(--bg2);border-radius:var(--radius);padding:12px;margin-bottom:12px">
-                    <div style="font-size:13px;color:var(--hint);margin-bottom:8px">Порівняння: ${labelA} → ${labelB}</div>
-                    <div style="display:flex;gap:12px;flex-wrap:wrap">
+                <div class="diff-stats-bar">
+                    <div class="diff-stats-label">Порівняння: ${App.esc(labelA)} → ${App.esc(labelB)}</div>
+                    <div class="diff-stats-badges">
                         <span class="diff-badge diff-badge-added">+${stats.added} додано</span>
                         <span class="diff-badge diff-badge-removed">-${stats.removed} видалено</span>
                         <span class="diff-badge diff-badge-modified">~${stats.modified} змінено</span>
-                        <span style="font-size:13px;color:var(--hint);margin-left:auto">Всього змін: ${changes.length}</span>
                     </div>
                 </div>
                 <div class="diff-table">
                     <div class="diff-header">
                         <div>Оригінал</div>
-                        <div>Було (${labelA})</div>
-                        <div>Стало (${labelB})</div>
+                        <div>Було (${App.esc(labelA)})</div>
+                        <div>Стало (${App.esc(labelB)})</div>
                     </div>
                     ${changes.map(c => this.renderDiffRow(c)).join('')}
                 </div>`;
         } catch (e) {
-            content.innerHTML = `<p style="color:var(--hint)">Помилка: ${App.esc(e.message)}</p>`;
+            content.innerHTML = `<div class="empty"><p style="color:var(--hint)">Помилка: ${App.esc(e.message)}</p></div>`;
         }
     },
 
@@ -115,16 +122,16 @@ const GlossaryVersionsView = {
     renderDiffRow(change) {
         if (change.type === 'added') {
             return `<div class="diff-row diff-added">
-                <div>${App.esc(change.source)}</div>
-                <div style="color:var(--hint);font-size:12px">—</div>
-                <div class="diff-new">${App.esc(change.target)}</div>
+                <div class="diff-cell"><span class="diff-cell-label">Оригінал:</span>${App.esc(change.source)}</div>
+                <div class="diff-cell"><span class="diff-cell-label">Було:</span><span style="color:var(--hint)">—</span></div>
+                <div class="diff-cell diff-new"><span class="diff-cell-label">Стало:</span>${App.esc(change.target)}</div>
             </div>`;
         }
         if (change.type === 'removed') {
             return `<div class="diff-row diff-removed">
-                <div>${App.esc(change.source)}</div>
-                <div class="diff-old">${App.esc(change.target)}</div>
-                <div style="color:var(--hint);font-size:12px">—</div>
+                <div class="diff-cell"><span class="diff-cell-label">Оригінал:</span>${App.esc(change.source)}</div>
+                <div class="diff-cell diff-old"><span class="diff-cell-label">Було:</span>${App.esc(change.target)}</div>
+                <div class="diff-cell"><span class="diff-cell-label">Стало:</span><span style="color:var(--hint)">—</span></div>
             </div>`;
         }
         // modified - word-level diff
@@ -134,14 +141,13 @@ const GlossaryVersionsView = {
         const newHighlighted = this.highlightDiff(newWords, oldWords, 'add');
 
         return `<div class="diff-row diff-modified">
-            <div>${App.esc(change.source)}</div>
-            <div>${oldHighlighted}</div>
-            <div>${newHighlighted}</div>
+            <div class="diff-cell"><span class="diff-cell-label">Оригінал:</span>${App.esc(change.source)}</div>
+            <div class="diff-cell"><span class="diff-cell-label">Було:</span>${oldHighlighted}</div>
+            <div class="diff-cell"><span class="diff-cell-label">Стало:</span>${newHighlighted}</div>
         </div>`;
     },
 
     highlightDiff(words, compareWords, type) {
-        // Simple word-level diff highlighting
         const compareSet = new Set(compareWords);
         return words.map(w => {
             if (!compareSet.has(w)) {
