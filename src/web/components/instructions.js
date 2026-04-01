@@ -8,7 +8,7 @@ const InstructionsView = {
 
     async render(container, project) {
         if (!project) {
-            container.innerHTML = '<div class="empty-state">Оберіть проєкт</div>';
+            container.innerHTML = '<div class="empty"><div class="empty-icon">📝</div><p>Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
             return;
         }
 
@@ -16,74 +16,72 @@ const InstructionsView = {
 
         container.innerHTML = `
             <div class="instructions-container">
-                <div class="instructions-header">
-                    <h2>📝 Інструкції для промптів</h2>
-                    <div class="instructions-actions">
-                        <button class="btn btn-sm" onclick="InstructionsView.refresh()">
-                            🔄 Оновити
+                <div class="section-header">
+                    <button class="back-btn" onclick="App.backToProjects()">\u2190</button>
+                    <h2>Інструкції для промптів</h2>
+                    <div class="section-actions">
+                        <button class="btn btn-sm btn-secondary" onclick="InstructionsView.refresh()" data-tooltip="Оновити">
+                            \ud83d\udd04
                         </button>
                         <button class="btn btn-sm btn-primary" onclick="InstructionsView.addInstruction()" ${canEdit ? '' : 'disabled'}>
-                            ➕ Додати інструкцію
+                            + Додати
                         </button>
                     </div>
                 </div>
 
-                <div class="instructions-info">
-                    <div class="info-box">
-                        <div class="info-icon">💡</div>
-                        <div class="info-content">
-                            <strong>Як це працює:</strong>
-                            Перетягніть інструкції у потрібному порядку. Вони будуть об'єднані у промпт для створення глосарію на основі ваших документів.
-                        </div>
+                <div class="info-banner">
+                    <div class="info-banner-icon">\ud83d\udca1</div>
+                    <div class="info-banner-text">
+                        <strong>Як це працює:</strong> Перетягніть інструкції у потрібному порядку. Вони будуть об'єднані у промпт для створення глосарію.
                     </div>
                 </div>
 
                 <div class="instructions-zones">
                     <div class="instructions-library">
-                        <h3>📚 Бібліотека інструкцій</h3>
+                        <h3>\ud83d\udcda Бібліотека</h3>
                         <div class="library-search">
-                            <input type="text" id="library-search" class="search-input" placeholder="🔍 Шукати інструкції...">
+                            <input type="text" id="library-search" class="search-input" placeholder="\ud83d\udd0d Шукати інструкції...">
                         </div>
                         <div id="library-list" class="instructions-list">
                             ${App.skeleton(3)}
                         </div>
-                        <button class="btn btn-sm btn-block" onclick="InstructionsView.createTemplate()" ${canEdit ? '' : 'disabled'}>
-                            ➕ Створити шаблон
+                        <button class="btn btn-sm btn-block btn-secondary" onclick="InstructionsView.createTemplate()" ${canEdit ? '' : 'disabled'}>
+                            + Створити шаблон
                         </button>
                     </div>
 
                     <div class="instructions-workspace">
-                        <h3>🎯 Активні інструкції (перетягніть для зміни порядку)</h3>
+                        <h3>\ud83c\udfaf Активні інструкції</h3>
                         <div id="active-instructions" class="instructions-dropzone">
                             ${App.skeleton(2)}
                         </div>
 
                         <div class="instructions-preview">
-                            <h4>📄 Попередній перегляд промпту</h4>
+                            <h4>\ud83d\udcc4 Попередній перегляд промпту</h4>
                             <div id="prompt-preview" class="prompt-preview-content">
                                 ${App.skeleton(3)}
                             </div>
                             <div class="preview-actions">
-                                <button class="btn btn-sm" onclick="InstructionsView.copyPrompt()">
-                                    📋 Копіювати промпт
+                                <button class="btn btn-sm btn-secondary" onclick="InstructionsView.copyPrompt()">
+                                    \ud83d\udccb Копіювати
                                 </button>
                                 <button class="btn btn-sm btn-primary" onclick="InstructionsView.generateGlossary()" ${canEdit ? '' : 'disabled'}>
-                                    ✨ Згенерувати глосарій
+                                    \u2728 Згенерувати глосарій
                                 </button>
                             </div>
                         </div>
 
                         <div class="instructions-stats">
                             <div class="stat-item">
-                                <span class="stat-label">Активних інструкцій:</span>
+                                <span class="stat-label">Активних</span>
                                 <span class="stat-value" id="stat-active">0</span>
                             </div>
                             <div class="stat-item">
-                                <span class="stat-label">Довжина промпту:</span>
+                                <span class="stat-label">Символів</span>
                                 <span class="stat-value" id="stat-length">0</span>
                             </div>
                             <div class="stat-item">
-                                <span class="stat-label">Оцінка токенів:</span>
+                                <span class="stat-label">Токенів</span>
                                 <span class="stat-value" id="stat-tokens">0</span>
                             </div>
                         </div>
@@ -92,23 +90,16 @@ const InstructionsView = {
             </div>
         `;
 
-        // Load instructions
         await this.loadInstructions(project.id);
-
-        // Setup drag-drop
         this.setupDragDrop();
-
-        // Apply RBAC
         RoleManager.updateUI();
     },
 
     async loadInstructions(projectId) {
         try {
-            // Load library templates
             const library = await API.getInstructionTemplates();
             this.libraryTemplates = library || this.getDefaultTemplates();
 
-            // Load active instructions for project
             let active = [];
             try {
                 active = await API.getProjectInstructions(projectId);
@@ -116,10 +107,9 @@ const InstructionsView = {
                 console.warn('Instructions API error, using defaults:', e.message);
             }
 
-            // Auto-populate with key defaults for new projects
             if (!active || active.length === 0) {
                 const defaults = this.getDefaultTemplates();
-                active = defaults.slice(0, 4); // First 4 defaults
+                active = defaults.slice(0, 4);
             }
             this.activeInstructions = active;
 
@@ -137,62 +127,14 @@ const InstructionsView = {
 
     getDefaultTemplates() {
         return [
-            {
-                id: 'intro',
-                title: 'Вступна інструкція',
-                content: 'Ви — експерт-перекладач. Ваше завдання — створити глосарій термінів на основі наданих документів.',
-                category: 'general',
-                icon: '📖'
-            },
-            {
-                id: 'terminology',
-                title: 'Термінологія',
-                content: 'Виділіть ключові терміни, специфічні для галузі. Надайте точні переклади українською мовою.',
-                category: 'extraction',
-                icon: '🔍'
-            },
-            {
-                id: 'context',
-                title: 'Контекст',
-                content: 'Для кожного терміну надайте короткий контекст використання та приклади із документів.',
-                category: 'extraction',
-                icon: '📝'
-            },
-            {
-                id: 'consistency',
-                title: 'Консистентність',
-                content: 'Забезпечте однаковість перекладу повторюваних термінів у різних контекстах.',
-                category: 'quality',
-                icon: '✓'
-            },
-            {
-                id: 'domain',
-                title: 'Галузева специфіка',
-                content: 'Враховуйте специфіку галузі (юридична, медична, технічна тощо) при виборі перекладів.',
-                category: 'quality',
-                icon: '⚙️'
-            },
-            {
-                id: 'abbreviations',
-                title: 'Абревіатури',
-                content: 'Включіть всі абревіатури та скорочення з їх розшифровкою і перекладом.',
-                category: 'extraction',
-                icon: '🔤'
-            },
-            {
-                id: 'frequency',
-                title: 'Частотність',
-                content: 'Пріоритизуйте терміни за частотою використання у документах.',
-                category: 'quality',
-                icon: '📊'
-            },
-            {
-                id: 'format',
-                title: 'Формат виводу',
-                content: 'Надайте глосарій у форматі: термін (мова оригіналу) | переклад | категорія | рівень важливості.',
-                category: 'output',
-                icon: '📋'
-            }
+            { id: 'intro', title: 'Вступна інструкція', content: 'Ви — експерт-перекладач. Ваше завдання — створити глосарій термінів на основі наданих документів.', category: 'general', icon: '\ud83d\udcd6' },
+            { id: 'terminology', title: 'Термінологія', content: 'Виділіть ключові терміни, специфічні для галузі. Надайте точні переклади українською мовою.', category: 'extraction', icon: '\ud83d\udd0d' },
+            { id: 'context', title: 'Контекст', content: 'Для кожного терміну надайте короткий контекст використання та приклади із документів.', category: 'extraction', icon: '\ud83d\udcdd' },
+            { id: 'consistency', title: 'Консистентність', content: 'Забезпечте однаковість перекладу повторюваних термінів у різних контекстах.', category: 'quality', icon: '\u2713' },
+            { id: 'domain', title: 'Галузева специфіка', content: 'Враховуйте специфіку галузі (юридична, медична, технічна тощо) при виборі перекладів.', category: 'quality', icon: '\u2699\ufe0f' },
+            { id: 'abbreviations', title: 'Абревіатури', content: 'Включіть всі абревіатури та скорочення з їх розшифровкою і перекладом.', category: 'extraction', icon: '\ud83d\udd24' },
+            { id: 'frequency', title: 'Частотність', content: 'Пріоритизуйте терміни за частотою використання у документах.', category: 'quality', icon: '\ud83d\udcca' },
+            { id: 'format', title: 'Формат виводу', content: 'Надайте глосарій у форматі: термін (мова оригіналу) | переклад | категорія | рівень важливості.', category: 'output', icon: '\ud83d\udccb' }
         ];
     },
 
@@ -208,16 +150,15 @@ const InstructionsView = {
                 <div class="instruction-icon">${template.icon}</div>
                 <div class="instruction-content">
                     <div class="instruction-title">${App.esc(template.title)}</div>
-                    <div class="instruction-preview">${App.esc(template.content.substring(0, 80))}...</div>
-                    <div class="instruction-category">${App.esc(template.category)}</div>
+                    <div class="instruction-preview">${App.esc(template.content.substring(0, 60))}${template.content.length > 60 ? '...' : ''}</div>
+                    <span class="instruction-category">${App.esc(template.category)}</span>
                 </div>
-                <button class="btn btn-icon btn-sm" onclick="event.stopPropagation(); InstructionsView.addToActive('${template.id}')" title="Додати до активних">
-                    ➕
+                <button class="btn btn-icon btn-sm btn-secondary" onclick="event.stopPropagation(); InstructionsView.addToActive('${template.id}')" data-tooltip="Додати">
+                    +
                 </button>
             </div>
         `).join('');
 
-        // Setup search
         document.getElementById('library-search')?.addEventListener('input', (e) => {
             this.filterLibrary(e.target.value);
         });
@@ -228,7 +169,7 @@ const InstructionsView = {
         if (!list) return;
 
         if (this.activeInstructions.length === 0) {
-            list.innerHTML = DragDrop.createDropIndicator('Перетягніть інструкції сюди').outerHTML;
+            list.innerHTML = '<div class="empty-state" style="padding:24px"><p style="font-size:14px">Перетягніть інструкції сюди або натисніть "+" у бібліотеці</p></div>';
             return;
         }
 
@@ -237,7 +178,7 @@ const InstructionsView = {
                  draggable="true"
                  data-id="${instr.id}"
                  data-index="${index}">
-                <div class="instruction-handle">☰</div>
+                <div class="instruction-handle">\u2630</div>
                 <div class="instruction-order">${index + 1}</div>
                 <div class="instruction-icon">${instr.icon}</div>
                 <div class="instruction-content">
@@ -245,11 +186,11 @@ const InstructionsView = {
                     <div class="instruction-text">${App.esc(instr.content)}</div>
                 </div>
                 <div class="instruction-actions">
-                    <button class="btn btn-icon btn-sm" onclick="InstructionsView.editInstruction(${index})" title="Редагувати">
-                        ✏️
+                    <button class="btn btn-icon btn-sm btn-secondary" onclick="InstructionsView.editInstruction(${index})" data-tooltip="Редагувати">
+                        \u270f\ufe0f
                     </button>
-                    <button class="btn btn-icon btn-sm" onclick="InstructionsView.removeFromActive(${index})" title="Видалити">
-                        ✕
+                    <button class="btn btn-icon btn-sm" onclick="InstructionsView.removeFromActive(${index})" data-tooltip="Видалити" style="color:var(--red)">
+                        \u2715
                     </button>
                 </div>
             </div>
@@ -262,12 +203,10 @@ const InstructionsView = {
         const activeZone = document.getElementById('active-instructions');
         if (!activeZone) return;
 
-        // Make active instructions sortable
         DragDrop.makeSortable(activeZone, {
             itemSelector: '.active-card',
             handle: '.instruction-handle',
             onReorder: async (newOrder) => {
-                // Reorder active instructions
                 const reordered = newOrder.map(id => {
                     return this.activeInstructions.find(i => i.id === id);
                 });
@@ -277,7 +216,6 @@ const InstructionsView = {
             }
         });
 
-        // Make active zone a drop zone for library items
         DragDrop.makeDropZone(activeZone, {
             accept: '*',
             onDrop: (data) => {
@@ -287,7 +225,6 @@ const InstructionsView = {
             }
         });
 
-        // Make library items draggable
         document.querySelectorAll('.library-card').forEach(card => {
             const templateData = JSON.parse(card.dataset.template);
             DragDrop.makeDraggable(card, {
@@ -307,7 +244,6 @@ const InstructionsView = {
         const template = this.libraryTemplates.find(t => t.id === templateId);
         if (!template) return;
 
-        // Check if already added
         if (this.activeInstructions.find(i => i.id === templateId)) {
             App.toast('Ця інструкція вже додана', 'warning');
             return;
@@ -317,8 +253,7 @@ const InstructionsView = {
         this.renderActive();
         this.updatePromptPreview();
         this.saveInstructions();
-
-        App.toast('✓ Інструкцію додано', 'success');
+        App.toast('Інструкцію додано', 'success');
     },
 
     removeFromActive(index) {
@@ -326,8 +261,7 @@ const InstructionsView = {
         this.renderActive();
         this.updatePromptPreview();
         this.saveInstructions();
-
-        App.toast('✓ Інструкцію видалено', 'success');
+        App.toast('Інструкцію видалено', 'success');
     },
 
     editInstruction(index) {
@@ -336,19 +270,20 @@ const InstructionsView = {
         overlay.className = 'modal-overlay';
         overlay.innerHTML = `
             <div class="modal">
-                <h3>✏️ Редагувати інструкцію</h3>
+                <h3>\u270f\ufe0f Редагувати інструкцію</h3>
                 <form id="edit-instruction-form">
                     <div class="form-group">
-                        <label>Назва:</label>
+                        <label>Назва</label>
                         <input type="text" id="edit-title" class="form-input" value="${App.esc(instr.title)}" required>
                     </div>
                     <div class="form-group">
-                        <label>Зміст:</label>
-                        <textarea id="edit-content" class="form-textarea" rows="6" required>${App.esc(instr.content)}</textarea>
+                        <label>Зміст інструкції</label>
+                        <textarea id="edit-content" class="form-textarea" rows="5" required>${App.esc(instr.content)}</textarea>
                     </div>
                     <div class="form-group">
-                        <label>Іконка:</label>
-                        <input type="text" id="edit-icon" class="form-input" value="${App.esc(instr.icon)}" maxlength="2">
+                        <label>Іконка</label>
+                        <input type="text" id="edit-icon" class="form-input" value="${App.esc(instr.icon)}" maxlength="2" style="width:80px">
+                        <div class="form-hint">Один емодзі-символ</div>
                     </div>
                     <div class="modal-actions">
                         <button type="button" class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Скасувати</button>
@@ -359,19 +294,20 @@ const InstructionsView = {
         `;
 
         document.body.appendChild(overlay);
+        setTimeout(() => overlay.querySelector('#edit-title')?.focus(), 50);
 
         overlay.querySelector('form').addEventListener('submit', async (e) => {
             e.preventDefault();
             instr.title = document.getElementById('edit-title').value;
             instr.content = document.getElementById('edit-content').value;
-            instr.icon = document.getElementById('edit-icon').value || '📝';
+            instr.icon = document.getElementById('edit-icon').value || '\ud83d\udcdd';
 
             this.renderActive();
             this.updatePromptPreview();
             await this.saveInstructions();
 
             overlay.remove();
-            App.toast('✓ Інструкцію оновлено', 'success');
+            App.toast('Інструкцію оновлено', 'success');
         });
 
         overlay.addEventListener('click', (e) => {
@@ -384,7 +320,7 @@ const InstructionsView = {
         if (!preview) return;
 
         if (this.activeInstructions.length === 0) {
-            preview.innerHTML = '<div class="empty-state">Додайте інструкції для генерації промпту</div>';
+            preview.innerHTML = '<div class="empty-state" style="padding:16px"><p style="font-size:13px">Додайте інструкції для генерації промпту</p></div>';
             return;
         }
 
@@ -392,11 +328,11 @@ const InstructionsView = {
         preview.innerHTML = `
             <div class="prompt-text">${App.esc(prompt)}</div>
             <div class="prompt-metadata">
-                <span>Символів: ${prompt.length}</span>
-                <span>•</span>
-                <span>Слів: ${prompt.split(/\s+/).length}</span>
-                <span>•</span>
-                <span>Інструкцій: ${this.activeInstructions.length}</span>
+                <span>${prompt.length} символів</span>
+                <span>\u00b7</span>
+                <span>${prompt.split(/\s+/).length} слів</span>
+                <span>\u00b7</span>
+                <span>${this.activeInstructions.length} інструкцій</span>
             </div>
         `;
     },
@@ -409,16 +345,18 @@ const InstructionsView = {
 
     updateStats() {
         const prompt = this.generatePrompt();
-
-        document.getElementById('stat-active').textContent = this.activeInstructions.length;
-        document.getElementById('stat-length').textContent = prompt.length;
-        document.getElementById('stat-tokens').textContent = Math.ceil(prompt.length / 4); // Rough estimate
+        const activeEl = document.getElementById('stat-active');
+        const lengthEl = document.getElementById('stat-length');
+        const tokensEl = document.getElementById('stat-tokens');
+        if (activeEl) activeEl.textContent = this.activeInstructions.length;
+        if (lengthEl) lengthEl.textContent = prompt.length;
+        if (tokensEl) tokensEl.textContent = Math.ceil(prompt.length / 4);
     },
 
     copyPrompt() {
         const prompt = this.generatePrompt();
         navigator.clipboard.writeText(prompt).then(() => {
-            App.toast('✓ Промпт скопійовано', 'success');
+            App.toast('Промпт скопійовано', 'success');
         }).catch(() => {
             App.toast('Не вдалося скопіювати', 'error');
         });
@@ -434,13 +372,9 @@ const InstructionsView = {
         }
 
         try {
-            App.toast('⏳ Генерування глосарію...', 'info');
-
+            App.toast('Генерування глосарію...', 'info');
             const result = await API.generateGlossaryFromPrompt(App.currentProject.id, prompt);
-
-            App.toast(`✓ Згенеровано ${result.terms_count} термінів`, 'success');
-
-            // Navigate to glossary view
+            App.toast(`Згенеровано ${result.terms_count} термінів`, 'success');
             App.navigate('glossary');
         } catch (err) {
             console.error('Failed to generate glossary:', err);
@@ -450,7 +384,6 @@ const InstructionsView = {
 
     async saveInstructions() {
         if (!App.currentProject) return;
-
         try {
             await API.updateProjectInstructions(App.currentProject.id, this.activeInstructions);
         } catch (err) {
@@ -480,15 +413,15 @@ const InstructionsView = {
         overlay.className = 'modal-overlay';
         overlay.innerHTML = `
             <div class="modal">
-                <h3>➕ Нова інструкція</h3>
+                <h3>+ Нова інструкція</h3>
                 <form id="new-instruction-form">
                     <div class="form-group">
-                        <label>Назва:</label>
+                        <label>Назва</label>
                         <input type="text" id="new-title" class="form-input" placeholder="Назва інструкції" required>
                     </div>
                     <div class="form-group">
-                        <label>Зміст:</label>
-                        <textarea id="new-content" class="form-textarea" rows="4" placeholder="Опишіть інструкцію..." required></textarea>
+                        <label>Зміст інструкції</label>
+                        <textarea id="new-content" class="form-textarea" rows="4" placeholder="Опишіть інструкцію для промпту..." required></textarea>
                     </div>
                     <div class="modal-actions">
                         <button type="button" class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Скасувати</button>
@@ -497,12 +430,14 @@ const InstructionsView = {
                 </form>
             </div>`;
         document.body.appendChild(overlay);
+        setTimeout(() => overlay.querySelector('#new-title')?.focus(), 50);
+
         overlay.querySelector('form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const title = document.getElementById('new-title').value.trim();
             const content = document.getElementById('new-content').value.trim();
             if (!title || !content) return;
-            this.activeInstructions.push({ id: 'custom_' + Date.now(), title, content, icon: '📝', category: 'custom' });
+            this.activeInstructions.push({ id: 'custom_' + Date.now(), title, content, icon: '\ud83d\udcdd', category: 'custom' });
             this.renderActive();
             this.updatePromptPreview();
             await this.saveInstructions();
@@ -525,88 +460,54 @@ instructionsStyle.textContent = `
         margin: 0 auto;
     }
 
-    .instructions-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 24px;
-    }
-
-    .instructions-actions {
-        display: flex;
-        gap: 8px;
-    }
-
-    .instructions-info {
-        margin-bottom: 24px;
-    }
-
-    .info-box {
-        display: flex;
-        gap: 16px;
-        padding: 16px;
-        background: var(--primary-light);
-        border: 1px solid var(--primary);
-        border-radius: 8px;
-    }
-
-    .info-icon {
-        font-size: 32px;
-        flex-shrink: 0;
-    }
-
-    .info-content {
-        flex: 1;
-        line-height: 1.6;
-    }
-
     .instructions-zones {
         display: grid;
-        grid-template-columns: 350px 1fr;
-        gap: 24px;
+        grid-template-columns: 320px 1fr;
+        gap: 20px;
     }
 
     .instructions-library,
     .instructions-workspace {
         background: var(--bg-secondary);
-        padding: 20px;
-        border-radius: 8px;
+        padding: 18px;
+        border-radius: 12px;
     }
 
     .instructions-library h3,
     .instructions-workspace h3 {
-        margin: 0 0 16px 0;
-        font-size: 16px;
+        margin: 0 0 14px 0;
+        font-size: 15px;
+        font-weight: 700;
     }
 
     .library-search {
-        margin-bottom: 16px;
+        margin-bottom: 14px;
     }
 
     .instructions-list {
         display: flex;
         flex-direction: column;
-        gap: 12px;
-        margin-bottom: 16px;
-        max-height: 600px;
+        gap: 8px;
+        margin-bottom: 14px;
+        max-height: 500px;
         overflow-y: auto;
     }
 
     .instruction-card {
         display: flex;
-        gap: 12px;
+        gap: 10px;
         align-items: start;
         padding: 12px;
         background: var(--bg);
         border: 1px solid var(--border);
-        border-radius: 6px;
+        border-radius: 10px;
         cursor: grab;
         transition: all 0.2s;
     }
 
     .instruction-card:hover {
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        transform: translateY(-1px);
+        box-shadow: var(--shadow-sm);
+        border-color: var(--btn);
     }
 
     .instruction-card:active {
@@ -614,29 +515,31 @@ instructionsStyle.textContent = `
     }
 
     .instruction-handle {
-        color: var(--text-secondary);
-        font-size: 16px;
+        color: var(--hint);
+        font-size: 14px;
         cursor: grab;
         user-select: none;
+        padding: 2px;
     }
 
     .instruction-order {
-        width: 24px;
-        height: 24px;
+        width: 22px;
+        height: 22px;
         display: flex;
         align-items: center;
         justify-content: center;
-        background: var(--primary);
+        background: var(--btn);
         color: white;
         border-radius: 50%;
-        font-size: 12px;
-        font-weight: 600;
+        font-size: 11px;
+        font-weight: 700;
         flex-shrink: 0;
     }
 
     .instruction-icon {
-        font-size: 24px;
+        font-size: 20px;
         flex-shrink: 0;
+        line-height: 1;
     }
 
     .instruction-content {
@@ -646,61 +549,72 @@ instructionsStyle.textContent = `
 
     .instruction-title {
         font-weight: 600;
-        margin-bottom: 4px;
+        font-size: 13px;
+        margin-bottom: 3px;
     }
 
     .instruction-preview,
     .instruction-text {
-        font-size: 13px;
-        color: var(--text-secondary);
+        font-size: 12px;
+        color: var(--hint);
         line-height: 1.4;
     }
 
     .instruction-category {
         display: inline-block;
-        margin-top: 6px;
-        padding: 2px 8px;
+        margin-top: 4px;
+        padding: 1px 8px;
         background: var(--bg-secondary);
         border-radius: 4px;
-        font-size: 11px;
-        color: var(--text-secondary);
+        font-size: 10px;
+        color: var(--hint);
+        text-transform: uppercase;
+        letter-spacing: .03em;
+        font-weight: 600;
     }
 
     .instruction-actions {
         display: flex;
-        gap: 4px;
+        gap: 2px;
         flex-shrink: 0;
     }
 
     .instructions-dropzone {
-        min-height: 200px;
+        min-height: 160px;
         display: flex;
         flex-direction: column;
-        gap: 12px;
-        padding: 16px;
+        gap: 8px;
+        padding: 14px;
         background: var(--bg);
         border: 2px dashed var(--border);
-        border-radius: 8px;
-        margin-bottom: 24px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+        transition: border-color 0.2s;
+    }
+
+    .instructions-dropzone:hover {
+        border-color: var(--btn);
     }
 
     .instructions-preview {
         background: var(--bg);
         padding: 16px;
-        border-radius: 8px;
-        margin-bottom: 24px;
+        border-radius: 12px;
+        margin-bottom: 20px;
     }
 
     .instructions-preview h4 {
-        margin: 0 0 12px 0;
-        font-size: 14px;
+        margin: 0 0 10px 0;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--hint);
     }
 
     .prompt-preview-content {
         background: var(--bg-secondary);
-        padding: 16px;
-        border-radius: 6px;
-        max-height: 300px;
+        padding: 14px;
+        border-radius: 8px;
+        max-height: 250px;
         overflow-y: auto;
         margin-bottom: 12px;
     }
@@ -708,17 +622,17 @@ instructionsStyle.textContent = `
     .prompt-text {
         white-space: pre-wrap;
         line-height: 1.6;
-        font-size: 14px;
-        font-family: 'Monaco', monospace;
+        font-size: 13px;
+        font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
     }
 
     .prompt-metadata {
-        font-size: 12px;
-        color: var(--text-secondary);
-        padding-top: 12px;
+        font-size: 11px;
+        color: var(--hint);
+        padding-top: 10px;
         border-top: 1px solid var(--border);
         display: flex;
-        gap: 8px;
+        gap: 6px;
     }
 
     .preview-actions {
@@ -729,28 +643,29 @@ instructionsStyle.textContent = `
     .instructions-stats {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 12px;
+        gap: 10px;
     }
 
     .stat-item {
         background: var(--bg);
         padding: 12px;
-        border-radius: 6px;
+        border-radius: 10px;
         text-align: center;
     }
 
-    .stat-label {
+    .stat-item .stat-label {
         display: block;
-        font-size: 12px;
-        color: var(--text-secondary);
-        margin-bottom: 4px;
+        font-size: 11px;
+        color: var(--hint);
+        margin-bottom: 2px;
+        font-weight: 500;
     }
 
-    .stat-value {
+    .stat-item .stat-value {
         display: block;
-        font-size: 24px;
-        font-weight: 700;
-        color: var(--primary);
+        font-size: 22px;
+        font-weight: 800;
+        color: var(--btn);
     }
 
     @media (max-width: 1200px) {

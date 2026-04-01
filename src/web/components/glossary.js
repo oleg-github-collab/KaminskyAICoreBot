@@ -8,11 +8,14 @@ const GlossaryView = {
 
     async render(c, project) {
         if (!project) {
-            c.innerHTML = '<div class="empty"><div class="empty-icon">📋</div><p>Оберіть проєкт</p></div>';
+            c.innerHTML = '<div class="empty"><div class="empty-icon">\ud83d\udccb</div><p>Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
             return;
         }
         c.innerHTML = `
-            <h2 style="font-size:16px;margin-bottom:12px">${App.esc(project.name)} — Глосарій</h2>
+            <div class="section-header">
+                <button class="back-btn" onclick="App.backToProjects()">\u2190</button>
+                <h2>${App.esc(project.name)} \u2014 Глосарій</h2>
+            </div>
             <div class="search-bar">
                 <input type="text" id="glossary-search" placeholder="Пошук за терміном або доменом..."
                     oninput="GlossaryView.handleSearch(this.value)">
@@ -23,20 +26,20 @@ const GlossaryView = {
                 <button class="tab" data-f="pending">На перевірці</button>
             </div>
             <div id="glossary-stats"></div>
-            <div id="glossary-actions" style="display:flex;gap:8px;margin-bottom:12px">
+            <div class="glossary-toolbar">
                 <div class="dropdown" style="position:relative">
-                    <button class="btn btn-secondary btn-sm" onclick="GlossaryView.toggleExportMenu(event)">📥 Експорт ▼</button>
-                    <div id="export-menu" class="dropdown-menu" style="display:none;position:absolute;top:100%;left:0;background:var(--bg-secondary);box-shadow:var(--shadow-normal);border-radius:6px;margin-top:4px;min-width:150px;z-index:100">
-                        <button onclick="GlossaryView.exportTSV(${project.id})">TSV</button>
-                        <button onclick="GlossaryView.exportCSV(${project.id})">CSV</button>
-                        <button onclick="GlossaryView.exportJSON(${project.id})">JSON</button>
-                        <button onclick="GlossaryView.exportXLSX(${project.id})">Excel (XLSX)</button>
+                    <button class="btn btn-secondary btn-sm" onclick="GlossaryView.toggleExportMenu(event)">\ud83d\udce5 Експорт \u25bc</button>
+                    <div id="export-menu" class="dropdown-menu" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;z-index:100">
+                        <button onclick="GlossaryView.exportTSV(${project.id})">\ud83d\udcc4 TSV</button>
+                        <button onclick="GlossaryView.exportCSV(${project.id})">\ud83d\udcc4 CSV</button>
+                        <button onclick="GlossaryView.exportJSON(${project.id})">\ud83d\udcc4 JSON</button>
+                        <button onclick="GlossaryView.exportXLSX(${project.id})">\ud83d\udcca Excel (XLSX)</button>
                     </div>
                 </div>
-                <button class="btn btn-secondary btn-sm" onclick="GlossaryView.syncGlossary(${project.id})">🔄 Синхронізувати</button>
-                <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="GlossaryView.bulkApprove(${project.id})">✓ Затвердити всі</button>
+                <button class="btn btn-secondary btn-sm" onclick="GlossaryView.syncGlossary(${project.id})">\ud83d\udd04 Синхронізувати</button>
+                <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="GlossaryView.bulkApprove(${project.id})">\u2713 Затвердити всі</button>
             </div>
-            <div id="batch-actions" style="display:none;background:var(--bg-secondary);padding:12px;border-radius:6px;margin-bottom:12px"></div>
+            <div id="batch-actions" style="display:none"></div>
             <div class="term-row header">
                 <div style="width:40px"><input type="checkbox" id="select-all" onchange="GlossaryView.toggleSelectAll(this.checked)"></div>
                 <div>Оригінал</div>
@@ -368,13 +371,14 @@ const GlossaryView = {
             return;
         }
 
-        actions.style.display = 'block';
+        actions.style.display = 'flex';
+        actions.className = 'batch-bar';
         actions.innerHTML = `
-            <div style="display:flex;gap:8px;align-items:center">
-                <span style="font-weight:500">${count} обрано</span>
-                <button class="btn btn-success btn-sm" onclick="GlossaryView.batchApproveSelected()">✓ Затвердити обрані</button>
-                <button class="btn btn-danger btn-sm" onclick="GlossaryView.batchRejectSelected()">✗ Відхилити обрані</button>
-                <button class="btn btn-secondary btn-sm" onclick="GlossaryView.deselectAll()">Скасувати вибір</button>
+            <span class="batch-count">${count} обрано</span>
+            <div class="batch-actions">
+                <button class="btn btn-success btn-sm" onclick="GlossaryView.batchApproveSelected()">\u2713 Затвердити</button>
+                <button class="btn btn-danger btn-sm" onclick="GlossaryView.batchRejectSelected()">\u2715 Відхилити</button>
+                <button class="btn btn-secondary btn-sm" onclick="GlossaryView.deselectAll()">Скасувати</button>
             </div>`;
     },
 

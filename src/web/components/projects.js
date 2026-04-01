@@ -5,14 +5,19 @@ const ProjectsView = {
             const data = await API.getProjects();
             const projects = data.projects || [];
 
-            let html = '<h2 style="font-size:16px;margin-bottom:12px">Мої проєкти</h2>';
+            let html = `<div class="section-header">
+                <h2>Мої проєкти</h2>
+                <div class="section-actions">
+                    <span style="font-size:12px;color:var(--hint)">${projects.length} проєкт${projects.length === 1 ? '' : 'ів'}</span>
+                </div>
+            </div>`;
 
             html += `
-                <div class="card" style="margin-bottom:16px">
-                    <div class="card-title" style="margin-bottom:8px">Створити новий проєкт</div>
-                    <div style="display:flex;gap:8px">
-                        <input class="input" id="new-project-name" placeholder="Назва проєкту" style="flex:1">
-                        <button class="btn btn-primary" style="width:auto;padding:8px 16px" onclick="ProjectsView.create()">Створити</button>
+                <div class="create-card">
+                    <div class="card-title">Створити новий проєкт</div>
+                    <div class="create-row">
+                        <input class="input" id="new-project-name" placeholder="Наприклад: Договір EN\u2192UK" onkeydown="if(event.key==='Enter')ProjectsView.create()">
+                        <button class="btn btn-primary" onclick="ProjectsView.create()">Створити</button>
                     </div>
                 </div>`;
 
@@ -24,12 +29,14 @@ const ProjectsView = {
                         <p style="font-size:13px;margin-top:8px;color:var(--hint)">Створіть перший проєкт вище</p>
                     </div>`;
             } else {
-                html += projects.map(p => `
+                html += projects.map(p => {
+                    const desc = p.description || (p.source_lang && p.target_lang ? p.source_lang + ' \u2192 ' + p.target_lang : '');
+                    return `
                     <div class="card project-card" style="cursor:pointer" onclick='ProjectsView.select(${JSON.stringify(p).replace(/'/g, "\\'")})'>
                         <div style="display:flex;justify-content:space-between;align-items:center">
                             <div style="flex:1;min-width:0">
                                 <div class="card-title">${App.esc(p.name)}</div>
-                                <div class="card-sub" style="margin-top:4px">${App.esc(p.description || (p.source_lang && p.target_lang ? p.source_lang + ' \u2192 ' + p.target_lang : ''))}</div>
+                                ${desc ? `<div class="card-sub" style="margin-top:4px">${App.esc(desc)}</div>` : ''}
                             </div>
                             <div style="display:flex;gap:6px;flex-shrink:0;margin-left:12px;align-items:center">
                                 <span class="card-badge">${App.esc(p.role)}</span>
@@ -37,18 +44,18 @@ const ProjectsView = {
                                     <button class="btn btn-sm btn-secondary project-action-btn"
                                             onclick="event.stopPropagation(); ProjectsView.editProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}', '${App.esc(p.description || '').replace(/'/g, "\\'")}')"
                                             data-tooltip="Редагувати">
-                                        Ред.
+                                        \u270f\ufe0f
                                     </button>
                                     <button class="btn btn-sm btn-danger project-action-btn"
                                             onclick="event.stopPropagation(); ProjectsView.deleteProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}')"
                                             data-tooltip="Видалити">
-                                        Вид.
+                                        \u2715
                                     </button>
                                 ` : ''}
                             </div>
                         </div>
-                    </div>
-                `).join('');
+                    </div>`;
+                }).join('');
             }
 
             c.innerHTML = html;
@@ -82,15 +89,15 @@ const ProjectsView = {
         overlay.className = 'modal-overlay';
         overlay.innerHTML = `
             <div class="modal">
-                <h3>Редагувати проєкт</h3>
+                <h3>\u270f\ufe0f Редагувати проєкт</h3>
                 <form id="edit-project-form">
-                    <div style="margin-bottom:12px">
-                        <label class="label">Назва проєкту:</label>
-                        <input type="text" id="edit-name" class="input" value="${App.esc(currentName)}" required maxlength="100">
+                    <div class="form-group">
+                        <label>Назва проєкту</label>
+                        <input type="text" id="edit-name" class="form-input" value="${App.esc(currentName)}" required maxlength="100">
                     </div>
-                    <div style="margin-bottom:16px">
-                        <label class="label">Опис (необов'язково):</label>
-                        <textarea id="edit-desc" class="input" rows="3" maxlength="500">${App.esc(currentDescription)}</textarea>
+                    <div class="form-group">
+                        <label>Опис</label>
+                        <textarea id="edit-desc" class="form-textarea" rows="3" maxlength="500" placeholder="Необов'язковий опис проєкту">${App.esc(currentDescription)}</textarea>
                     </div>
                     <div class="modal-actions">
                         <button type="button" class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Скасувати</button>
@@ -100,6 +107,7 @@ const ProjectsView = {
             </div>`;
 
         document.body.appendChild(overlay);
+        setTimeout(() => overlay.querySelector('#edit-name')?.focus(), 50);
 
         overlay.querySelector('form').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -121,7 +129,6 @@ const ProjectsView = {
             }
         });
 
-        // Close on background click
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) overlay.remove();
         });
@@ -129,8 +136,8 @@ const ProjectsView = {
 
     async deleteProject(projectId, projectName) {
         App.modalConfirm(
-            'Видалити проєкт?',
-            `Ви впевнені, що хочете видалити проєкт "${projectName}"? Це видалить усі файли, глосарії та повідомлення. Цю дію не можна скасувати.`,
+            '\u26a0\ufe0f Видалити проєкт?',
+            `Ви впевнені, що хочете видалити проєкт \u00ab${projectName}\u00bb? Це видалить усі файли, глосарії та повідомлення. Цю дію не можна скасувати.`,
             async () => {
                 try {
                     await API.deleteProject(projectId);

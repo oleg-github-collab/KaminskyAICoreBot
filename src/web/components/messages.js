@@ -9,15 +9,18 @@ const MessagesView = {
     async render(c, project) {
         this.disconnect();
         if (!project) {
-            c.innerHTML = '<div class="empty"><div class="empty-icon">💬</div><p>Оберіть проєкт</p></div>';
+            c.innerHTML = '<div class="empty"><div class="empty-icon">\ud83d\udcac</div><p>Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
             return;
         }
         this.currentPid = project.id;
         c.innerHTML = `
             <div class="chat-container">
-                <div class="chat-header">
-                    <h2 style="font-size:16px;margin:0">${App.esc(project.name)} — Чат</h2>
-                    <div id="connection-status" style="font-size:11px;color:var(--hint);margin-top:2px">🟡 Підключення...</div>
+                <div class="chat-header" style="display:flex;align-items:center;gap:10px">
+                    <button style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--bg);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center" onclick="App.backToProjects()">\u2190</button>
+                    <div style="flex:1">
+                        <h2 style="font-size:15px;margin:0;font-weight:600">${App.esc(project.name)}</h2>
+                        <div id="connection-status" style="font-size:11px;color:var(--hint)">\ud83d\udfe1 Підключення...</div>
+                    </div>
                 </div>
                 <div id="messages-list" class="chat-messages"><div class="loading">Завантаження...</div></div>
                 <div id="typing-indicator" style="display:none">
@@ -73,7 +76,7 @@ const MessagesView = {
             const data = await API.getMessages(pid);
             const messages = data.messages || [];
             if (!messages.length) {
-                list.innerHTML = '<div class="empty" style="padding:20px"><p>Немає повідомлень</p><p style="font-size:13px;color:var(--hint)">Напишіть перше повідомлення</p></div>';
+                list.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-icon">\u2709\ufe0f</div><p>Немає повідомлень</p><p style="font-size:13px;color:var(--hint);margin-top:4px">Напишіть спеціалісту перше повідомлення</p></div>';
                 return;
             }
             list.innerHTML = messages.map(m => this.renderBubble(m)).join('');

@@ -3,36 +3,38 @@ const FilesView = {
     uploadCategory: 'source',
     async render(c, project) {
         if (!project) {
-            c.innerHTML = '<div class="empty"><div class="empty-icon">📁</div><p>Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
+            c.innerHTML = '<div class="empty"><div class="empty-icon">\ud83d\udcc1</div><p>Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
             return;
         }
         c.innerHTML = `
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-                <button class="btn" style="padding:6px 12px;width:auto" onclick="App.backToProjects()">\u2190</button>
-                <h2 style="font-size:16px;margin:0;flex:1">${App.esc(project.name)} \u2014 Файли</h2>
+            <div class="section-header">
+                <button class="back-btn" onclick="App.backToProjects()">\u2190</button>
+                <h2>${App.esc(project.name)} \u2014 Файли</h2>
             </div>
             <div class="tabs" id="file-tabs">
                 <button class="tab active" data-cat="all">Всі</button>
                 <button class="tab" data-cat="source">Вихідні</button>
                 <button class="tab" data-cat="reference">Референс</button>
             </div>
-            <div class="card" style="margin:12px 0">
-                <div class="card-title" style="margin-bottom:8px">Завантажити файли</div>
-                <div style="display:flex;gap:8px;margin-bottom:8px">
-                    <select id="upload-cat" class="input" style="width:auto;padding:6px 10px">
+            <div class="upload-card">
+                <div class="card-title">\ud83d\udce4 Завантажити файли</div>
+                <div class="upload-controls">
+                    <select id="upload-cat" class="input" style="width:auto;padding:8px 12px;font-size:13px">
                         <option value="source">Вихідні</option>
                         <option value="reference">Референс</option>
                     </select>
-                    <button class="btn btn-primary" style="flex:1" onclick="document.getElementById('file-input').click()">Обрати файли</button>
+                    <button class="btn btn-primary btn-sm" style="flex:1" onclick="document.getElementById('file-input').click()">Обрати файли</button>
                 </div>
                 <div class="drop-zone" id="drop-zone">
+                    <span class="drop-icon">\ud83d\udcc2</span>
                     <p>Перетягніть файли сюди</p>
+                    <span class="drop-hint">або натисніть для вибору</span>
                     <input type="file" id="file-input" multiple style="display:none">
                 </div>
-                <div class="progress-bar" id="upload-progress" style="display:none;margin-top:8px">
+                <div class="progress-bar" id="upload-progress" style="display:none">
                     <div class="progress-bar-fill" id="upload-fill" style="width:0%"></div>
                 </div>
-                <div id="upload-status" style="font-size:12px;color:var(--hint);margin-top:4px"></div>
+                <div class="upload-status" id="upload-status"></div>
             </div>
             <div id="files-stats"></div>
             <div id="files-list"><div class="loading">Завантаження...</div></div>`;
@@ -71,15 +73,14 @@ const FilesView = {
             const data = await API.getFiles(pid, cat);
             const files = data.files || [];
 
-            // Stats
             if (statsEl && files.length) {
                 const totalChars = files.reduce((s, f) => s + (f.char_count || 0), 0);
                 const totalPages = files.reduce((s, f) => s + (f.page_count || 0), 0);
                 const totalPrice = files.reduce((s, f) => s + (f.estimated_price_cents || 0), 0);
                 statsEl.innerHTML = `
-                    <div class="stats" style="margin-bottom:8px">
+                    <div class="stats" style="margin-bottom:12px">
                         <div class="stat"><div class="stat-value">${files.length}</div><div class="stat-label">Файлів</div></div>
-                        <div class="stat"><div class="stat-value">${totalChars}</div><div class="stat-label">Символів</div></div>
+                        <div class="stat"><div class="stat-value">${totalChars.toLocaleString()}</div><div class="stat-label">Символів</div></div>
                         <div class="stat"><div class="stat-value">${totalPages}</div><div class="stat-label">Сторінок</div></div>
                         <div class="stat"><div class="stat-value">\u20ac${App.fmtEuro(totalPrice)}</div><div class="stat-label">Вартість</div></div>
                     </div>`;
@@ -88,7 +89,7 @@ const FilesView = {
             }
 
             if (!files.length) {
-                list.innerHTML = '<div class="empty" style="padding:20px"><p>Немає файлів</p><p style="font-size:13px;color:var(--hint)">Завантажте файли вище або надішліть їх через бот</p></div>';
+                list.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-icon">\ud83d\udcc4</div><p>Немає файлів</p><p style="font-size:13px;color:var(--hint);margin-top:4px">Завантажте файли вище або надішліть їх через бот</p></div>';
                 return;
             }
             list.innerHTML = files.map(f => `
@@ -98,7 +99,7 @@ const FilesView = {
                         <div class="file-name">${App.esc(f.original_name)}</div>
                         <div class="file-meta">
                             ${App.esc(f.category)} \u00b7 ${App.fmtSize(f.file_size)}
-                            ${f.char_count ? ' \u00b7 ' + f.char_count + ' сим.' : ''}
+                            ${f.char_count ? ' \u00b7 ' + f.char_count.toLocaleString() + ' сим.' : ''}
                             ${f.page_count ? ' \u00b7 ' + f.page_count + ' стор.' : ''}
                             ${f.estimated_price_cents ? ' \u00b7 \u20ac' + App.fmtEuro(f.estimated_price_cents) : ''}
                         </div>
@@ -106,11 +107,11 @@ const FilesView = {
                     <div style="display:flex;gap:4px">
                         <button class="btn btn-secondary btn-sm"
                                 onclick="FileViewer.show(${pid}, ${f.id}, '${App.esc(f.original_name).replace(/'/g, "\\'")}')"
-                                data-tooltip="Переглянути текст">
+                                data-tooltip="Переглянути">
                             \ud83d\udc41\ufe0f
                         </button>
                         <button class="btn btn-sm"
-                                style="color:#ff3b30"
+                                style="color:var(--red)"
                                 onclick="FilesView.deleteFile(${pid},${f.id},'${App.esc(f.original_name).replace(/'/g, "\\'")}')"
                                 data-tooltip="Видалити">
                             \u2715
@@ -119,7 +120,7 @@ const FilesView = {
                 </div>
             `).join('');
         } catch (e) {
-            list.innerHTML = `<p style="color:var(--hint)">Помилка: ${App.esc(e.message)}</p>`;
+            list.innerHTML = `<p style="color:var(--hint);padding:12px">Помилка: ${App.esc(e.message)}</p>`;
         }
     },
 
@@ -136,13 +137,13 @@ const FilesView = {
             status.textContent = 'Завантажено ' + done + '/' + total;
         });
         pb.style.display = 'none';
-        status.textContent = 'Завантаження завершено!';
+        status.textContent = '\u2705 Завантаження завершено!';
         setTimeout(() => { if (status) status.textContent = ''; }, 3000);
         this.loadFiles(pid);
     },
 
     async deleteFile(pid, fid, name) {
-        App.confirm('Видалити файл "' + name + '"?', async (ok) => {
+        App.confirm('Видалити файл \u00ab' + name + '\u00bb?', async (ok) => {
             if (!ok) return;
             try {
                 await API.deleteFile(pid, fid);
