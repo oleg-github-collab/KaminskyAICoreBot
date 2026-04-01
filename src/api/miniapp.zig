@@ -1048,7 +1048,7 @@ pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
             const method = content_stmt.columnText(1) orelse "";
             // If we have non-empty content, return it
             if (content.len > 0) {
-                const content_owned = try res.arena.dupe(u8, content);
+                const content_owned: []const u8 = try res.arena.dupe(u8, content);
                 try res.json(.{ .content = content_owned, .file_name = file_name }, .{});
                 return;
             }

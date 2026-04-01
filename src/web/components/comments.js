@@ -5,7 +5,7 @@ const CommentsView = {
     onCommentClick: null,
     pendingAnchor: null,
 
-    // Modal mode (original) — for non-file resources
+    // Modal mode — for non-file resources
     show(resourceType, resourceId, projectId) {
         this.currentResource = { type: resourceType, id: resourceId, projectId };
         this.onCommentClick = null;
@@ -20,18 +20,25 @@ const CommentsView = {
         this.pendingAnchor = null;
 
         container.innerHTML = `
-            <div class="sidebar-header">
-                <span>💬 Коментарі</span>
-                <span id="comments-count" style="font-size:12px;color:var(--hint)"></span>
-            </div>
-            <div class="sidebar-comments" id="comments-list">
-                <div class="loading" style="padding:20px">Завантаження...</div>
-            </div>
-            <div class="sidebar-editor" id="sidebar-editor-area">
-                <div id="anchor-badge-area"></div>
-                <div id="comment-editor" style="min-height:50px;background:var(--bg-secondary);border-radius:6px;margin-bottom:8px"></div>
-                <div style="display:flex;justify-content:flex-end;gap:8px">
-                    <button class="btn btn-primary btn-sm" onclick="CommentsView.submitComment()">💬 Додати</button>
+            <div class="cv-sidebar">
+                <div class="cv-header">
+                    <div class="cv-header-title">
+                        <span>&#128172; Коментарі</span>
+                        <span class="cv-count" id="comments-count"></span>
+                    </div>
+                </div>
+                <div class="cv-list" id="comments-list">
+                    <div class="loading" style="padding:30px;text-align:center">Завантаження...</div>
+                </div>
+                <div class="cv-editor" id="sidebar-editor-area">
+                    <div id="anchor-badge-area"></div>
+                    <div class="cv-editor-wrap">
+                        <div id="comment-editor"></div>
+                    </div>
+                    <div class="cv-editor-actions">
+                        <span class="cv-editor-hint">Ctrl+Enter</span>
+                        <button class="btn btn-primary btn-sm" onclick="CommentsView.submitComment()">Додати</button>
+                    </div>
                 </div>
             </div>`;
 
@@ -44,12 +51,12 @@ const CommentsView = {
         const badge = document.getElementById('anchor-badge-area');
         if (!badge) return;
         if (anchor) {
-            const truncated = anchor.quoted_text.length > 60 ? anchor.quoted_text.slice(0, 57) + '...' : anchor.quoted_text;
+            const truncated = anchor.quoted_text.length > 50 ? anchor.quoted_text.slice(0, 47) + '...' : anchor.quoted_text;
             badge.innerHTML = `
-                <div class="anchor-badge">
-                    <span>📌</span>
-                    <span class="anchor-text">«${App.esc(truncated)}»</span>
-                    <button class="anchor-clear" onclick="CommentsView.clearAnchor()">✕</button>
+                <div class="cv-anchor">
+                    <span class="cv-anchor-pin">&#128204;</span>
+                    <span class="cv-anchor-text">\u00AB${App.esc(truncated)}\u00BB</span>
+                    <button class="cv-anchor-clear" onclick="CommentsView.clearAnchor()">&times;</button>
                 </div>`;
         } else {
             badge.innerHTML = '';
@@ -62,24 +69,29 @@ const CommentsView = {
         if (badge) badge.innerHTML = '';
     },
 
-    // Show suggestion form (replaces normal editor temporarily)
     showSuggestionForm(anchor) {
         this.pendingAnchor = anchor;
         const editorArea = document.getElementById('sidebar-editor-area');
         if (!editorArea) return;
+
+        const truncated = anchor.quoted_text.length > 50 ? anchor.quoted_text.slice(0, 47) + '...' : anchor.quoted_text;
         editorArea.innerHTML = `
-            <div class="suggestion-form">
-                <div class="anchor-badge" style="margin-bottom:8px">
-                    <span>📌</span>
-                    <span class="anchor-text">«${App.esc(anchor.quoted_text.length > 60 ? anchor.quoted_text.slice(0, 57) + '...' : anchor.quoted_text)}»</span>
+            <div class="cv-suggestion-form">
+                <div class="cv-anchor" style="margin-bottom:10px">
+                    <span class="cv-anchor-pin">&#128204;</span>
+                    <span class="cv-anchor-text">\u00AB${App.esc(truncated)}\u00BB</span>
                 </div>
-                <label>Запропонований текст:</label>
-                <textarea id="suggestion-text">${App.esc(anchor.quoted_text)}</textarea>
-                <label style="margin-top:8px">Пояснення (необов'язково):</label>
-                <div id="suggestion-explanation" style="min-height:40px;background:var(--bg);border-radius:6px;margin-bottom:8px"></div>
-                <div style="display:flex;gap:8px;justify-content:flex-end">
+                <div class="cv-field">
+                    <label class="cv-label">Запропонований текст</label>
+                    <textarea id="suggestion-text" class="cv-textarea" rows="3">${App.esc(anchor.quoted_text)}</textarea>
+                </div>
+                <div class="cv-field">
+                    <label class="cv-label">Пояснення <span class="cv-optional">(необов'язково)</span></label>
+                    <div id="suggestion-explanation"></div>
+                </div>
+                <div class="cv-suggestion-actions">
                     <button class="btn btn-secondary btn-sm" onclick="CommentsView.cancelSuggestion()">Скасувати</button>
-                    <button class="btn btn-primary btn-sm" onclick="CommentsView.submitSuggestion()">✏️ Надіслати</button>
+                    <button class="btn btn-primary btn-sm" onclick="CommentsView.submitSuggestion()">&#9998; Надіслати</button>
                 </div>
             </div>`;
 
@@ -90,6 +102,9 @@ const CommentsView = {
                 modules: { toolbar: [['bold', 'italic'], ['link']] }
             });
         }
+
+        const ta = document.getElementById('suggestion-text');
+        if (ta) ta.focus();
     },
 
     cancelSuggestion() {
@@ -98,9 +113,12 @@ const CommentsView = {
         if (!editorArea) return;
         editorArea.innerHTML = `
             <div id="anchor-badge-area"></div>
-            <div id="comment-editor" style="min-height:50px;background:var(--bg-secondary);border-radius:6px;margin-bottom:8px"></div>
-            <div style="display:flex;justify-content:flex-end;gap:8px">
-                <button class="btn btn-primary btn-sm" onclick="CommentsView.submitComment()">💬 Додати</button>
+            <div class="cv-editor-wrap">
+                <div id="comment-editor"></div>
+            </div>
+            <div class="cv-editor-actions">
+                <span class="cv-editor-hint">Ctrl+Enter</span>
+                <button class="btn btn-primary btn-sm" onclick="CommentsView.submitComment()">Додати</button>
             </div>`;
         this.initEditor();
     },
@@ -156,10 +174,10 @@ const CommentsView = {
             this.comments = data.comments || [];
             this.renderComments();
             const countEl = document.getElementById('comments-count');
-            if (countEl) countEl.textContent = this.comments.length ? `(${this.comments.length})` : '';
+            if (countEl) countEl.textContent = this.comments.length ? this.comments.length : '';
         } catch (e) {
             const container = document.getElementById('comments-list');
-            if (container) container.innerHTML = `<div class="empty" style="padding:20px"><p style="color:var(--hint)">Помилка: ${App.esc(e.message)}</p></div>`;
+            if (container) container.innerHTML = '<div class="cv-empty"><p>' + App.esc(e.message) + '</p></div>';
         }
     },
 
@@ -168,19 +186,19 @@ const CommentsView = {
         modal.className = 'modal-overlay';
         modal.id = 'comments-modal';
         modal.innerHTML = `
-            <div class="modal" style="max-width:700px;max-height:90vh;display:flex;flex-direction:column">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-                    <h3 style="margin:0">💬 Коментарі</h3>
-                    <button class="btn btn-sm btn-secondary" onclick="document.getElementById('comments-modal').remove()">✕</button>
+            <div class="modal" style="max-width:600px;max-height:90vh;display:flex;flex-direction:column">
+                <div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:12px">
+                    <h3 style="margin:0;font-size:16px">&#128172; Коментарі</h3>
+                    <button class="btn btn-sm btn-secondary" onclick="document.getElementById('comments-modal').remove()">&times;</button>
                 </div>
-                <div id="comments-list" style="flex:1;overflow-y:auto;margin-bottom:16px;max-height:400px">
-                    <div class="loading">Завантаження...</div>
-                </div>
-                <div style="border-top:1px solid var(--border);padding-top:16px">
-                    <div id="comment-editor" style="min-height:80px;background:var(--bg-secondary);border-radius:6px;margin-bottom:8px"></div>
-                    <div style="display:flex;justify-content:flex-end;gap:8px">
-                        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('comments-modal').remove()">Скасувати</button>
-                        <button class="btn btn-primary btn-sm" onclick="CommentsView.submitComment()">💬 Відправити</button>
+                <div id="comments-list" style="flex:1;overflow-y:auto;margin-bottom:12px;max-height:400px"></div>
+                <div style="border-top:1px solid var(--border);padding-top:12px">
+                    <div class="cv-editor-wrap">
+                        <div id="comment-editor"></div>
+                    </div>
+                    <div class="cv-editor-actions" style="margin-top:8px">
+                        <span class="cv-editor-hint">Ctrl+Enter</span>
+                        <button class="btn btn-primary btn-sm" onclick="CommentsView.submitComment()">Відправити</button>
                     </div>
                 </div>
             </div>`;
@@ -220,10 +238,10 @@ const CommentsView = {
 
         if (this.comments.length === 0) {
             container.innerHTML = `
-                <div class="empty" style="padding:30px;text-align:center">
-                    <div style="font-size:36px;margin-bottom:8px">💬</div>
-                    <p style="font-size:13px;color:var(--hint)">Немає коментарів</p>
-                    <p style="font-size:12px;color:var(--hint);margin-top:4px">Виділіть текст для коментування</p>
+                <div class="cv-empty">
+                    <div class="cv-empty-icon">&#128172;</div>
+                    <p class="cv-empty-title">Немає коментарів</p>
+                    <p class="cv-empty-hint">Виділіть текст зліва, щоб додати коментар або запропонувати зміну</p>
                 </div>`;
             return;
         }
@@ -248,54 +266,74 @@ const CommentsView = {
     },
 
     renderComment(comment, depth = 0) {
-        const indent = depth * 16;
+        const indent = depth * 12;
         const canReply = depth < 3;
         const isSuggestion = comment.comment_type === 'suggestion';
-        const statusCls = isSuggestion ? ` comment-type-suggestion ${comment.suggestion_status === 'accepted' ? 'suggestion-accepted' : comment.suggestion_status === 'rejected' ? 'suggestion-rejected' : ''}` : ' comment-type-comment';
+
+        let statusCls = 'cv-comment';
+        if (isSuggestion) {
+            statusCls = 'cv-suggestion';
+            if (comment.suggestion_status === 'accepted') statusCls += ' cv-accepted';
+            else if (comment.suggestion_status === 'rejected') statusCls += ' cv-rejected';
+        }
 
         const content = comment.content_format === 'html' ? comment.content : App.esc(comment.content);
 
+        // Quoted text badge (clickable to navigate)
         let quotedHtml = '';
         if (comment.quoted_text) {
-            const qt = comment.quoted_text.length > 80 ? comment.quoted_text.slice(0, 77) + '...' : comment.quoted_text;
-            quotedHtml = `<div class="comment-quoted" onclick="CommentsView.navigateToAnchor(${comment.start_offset || 0}, ${comment.end_offset || 0})">«${App.esc(qt)}»</div>`;
+            const qt = comment.quoted_text.length > 60 ? comment.quoted_text.slice(0, 57) + '...' : comment.quoted_text;
+            quotedHtml = `<div class="cv-quoted" onclick="CommentsView.navigateToAnchor(${comment.start_offset || 0}, ${comment.end_offset || 0})">\u00AB${App.esc(qt)}\u00BB</div>`;
         }
 
+        // Suggestion diff display
         let suggestionHtml = '';
         if (isSuggestion && comment.quoted_text && comment.suggested_text) {
+            const statusLabel = comment.suggestion_status === 'accepted' ? '<span class="cv-status-badge cv-badge-accepted">&#10003; Прийнято</span>'
+                : comment.suggestion_status === 'rejected' ? '<span class="cv-status-badge cv-badge-rejected">&#10005; Відхилено</span>'
+                : '';
             suggestionHtml = `
-                <div class="suggestion-diff">
-                    <del class="suggestion-del">${App.esc(comment.quoted_text)}</del>
-                    <span style="color:var(--hint);margin:0 4px">→</span>
-                    <ins class="suggestion-ins">${App.esc(comment.suggested_text)}</ins>
+                <div class="cv-diff">
+                    ${statusLabel}
+                    <div class="cv-diff-row">
+                        <del class="cv-del">${App.esc(comment.quoted_text)}</del>
+                    </div>
+                    <div class="cv-diff-arrow">&darr;</div>
+                    <div class="cv-diff-row">
+                        <ins class="cv-ins">${App.esc(comment.suggested_text)}</ins>
+                    </div>
                 </div>`;
         }
 
+        // Action buttons for pending suggestions
         let actionsHtml = '';
         if (isSuggestion && comment.suggestion_status === 'pending') {
             actionsHtml = `
-                <div class="suggestion-actions">
-                    <button class="btn btn-sm btn-success" onclick="CommentsView.acceptSuggestion(${comment.id})">✓ Прийняти</button>
-                    <button class="btn btn-sm btn-danger" onclick="CommentsView.rejectSuggestion(${comment.id})">✗ Відхилити</button>
+                <div class="cv-actions">
+                    <button class="cv-action-btn cv-btn-accept" onclick="CommentsView.acceptSuggestion(${comment.id})">&#10003; Прийняти</button>
+                    <button class="cv-action-btn cv-btn-reject" onclick="CommentsView.rejectSuggestion(${comment.id})">&#10005; Відхилити</button>
                 </div>`;
         }
 
+        // Bottom actions (reply, delete)
+        let bottomActions = '<div class="cv-bottom-actions">';
+        if (canReply) bottomActions += `<button class="cv-link-btn" onclick="CommentsView.showReplyForm(${comment.id})">&#8617; Відповісти</button>`;
+        if (comment.can_delete) bottomActions += `<button class="cv-link-btn cv-link-danger" onclick="CommentsView.deleteComment(${comment.id})">&#128465;</button>`;
+        bottomActions += '</div>';
+
         return `
-            <div class="comment-item${statusCls}" data-id="${comment.id}" style="margin-left:${indent}px">
-                <div class="comment-meta">
-                    <span class="author">${App.esc(comment.user_name || 'Користувач')}</span>
-                    <span class="time">${App.fmtDate(comment.created_at)}</span>
-                    ${isSuggestion ? '<span style="color:#f97316;font-size:11px">✏️ пропозиція</span>' : ''}
+            <div class="comment-item ${statusCls}" data-id="${comment.id}" style="margin-left:${indent}px">
+                <div class="cv-meta">
+                    <span class="cv-author">${App.esc(comment.user_name || 'Користувач')}</span>
+                    ${isSuggestion ? '<span class="cv-type-badge">&#9998; пропозиція</span>' : ''}
+                    <span class="cv-time">${App.fmtDate(comment.created_at)}</span>
                 </div>
                 ${quotedHtml}
                 ${suggestionHtml}
-                <div class="comment-body">${content}</div>
+                <div class="cv-body">${content}</div>
                 ${actionsHtml}
-                <div class="comment-actions-bar">
-                    ${canReply ? `<button class="comment-action-btn" onclick="CommentsView.showReplyForm(${comment.id})">↩️ Відповісти</button>` : ''}
-                    ${comment.can_delete ? `<button class="comment-action-btn" style="color:var(--error)" onclick="CommentsView.deleteComment(${comment.id})">🗑️</button>` : ''}
-                </div>
-                <div id="reply-form-${comment.id}" style="display:none;margin-top:8px"></div>
+                ${bottomActions}
+                <div id="reply-form-${comment.id}" class="cv-reply-form"></div>
                 ${comment.children.map(child => this.renderComment(child, depth + 1)).join('')}
             </div>`;
     },
@@ -338,17 +376,19 @@ const CommentsView = {
     },
 
     showReplyForm(parentId) {
-        const form = document.getElementById(`reply-form-${parentId}`);
+        const form = document.getElementById('reply-form-' + parentId);
         if (!form) return;
         form.style.display = 'block';
         form.innerHTML = `
-            <div id="reply-editor-${parentId}" style="min-height:50px;background:var(--bg);border-radius:6px;margin-bottom:6px"></div>
-            <div style="display:flex;gap:6px;justify-content:flex-end">
-                <button class="btn btn-sm btn-secondary" onclick="document.getElementById('reply-form-${parentId}').style.display='none'">Скасувати</button>
-                <button class="btn btn-sm btn-primary" onclick="CommentsView.submitReply(${parentId})">Відповісти</button>
+            <div class="cv-reply-editor">
+                <div id="reply-editor-${parentId}"></div>
+                <div class="cv-reply-actions">
+                    <button class="btn btn-sm btn-secondary" onclick="document.getElementById('reply-form-${parentId}').style.display='none'">Скасувати</button>
+                    <button class="btn btn-sm btn-primary" onclick="CommentsView.submitReply(${parentId})">Відповісти</button>
+                </div>
             </div>`;
         if (window.Quill) {
-            new Quill(`#reply-editor-${parentId}`, {
+            new Quill('#reply-editor-' + parentId, {
                 theme: 'snow',
                 placeholder: 'Ваша відповідь...',
                 modules: { toolbar: [['bold', 'italic'], ['link']] }
@@ -357,7 +397,7 @@ const CommentsView = {
     },
 
     async submitReply(parentId) {
-        const el = document.querySelector(`#reply-editor-${parentId}`);
+        const el = document.querySelector('#reply-editor-' + parentId);
         if (!el || !window.Quill) return;
         const quill = Quill.find(el);
         if (!quill) return;

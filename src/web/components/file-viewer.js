@@ -6,6 +6,75 @@ const FileViewer = {
     overlay: null,
     lockedSegIdx: null,
     _pendingSelection: null,
+    _selectionCleanup: null,
+
+    // ═══════════════════════════════════════════════════════
+    //  Smart text formatting — paragraphs, headings, lists
+    // ═══════════════════════════════════════════════════════
+    formatText(raw) {
+        if (!raw || !raw.trim()) return '';
+
+        // Split into paragraphs by double newlines (or 3+ newlines)
+        const blocks = raw.split(/\n{2,}/).filter(b => b.trim());
+        if (blocks.length === 0) return '<p class="fv-para">' + App.esc(raw) + '</p>';
+
+        let html = '';
+        for (const block of blocks) {
+            const trimmed = block.trim();
+            if (!trimmed) continue;
+
+            // Detect headings: ALL CAPS short lines, or lines like "Chapter N", "Section N", numbered headings
+            const lines = trimmed.split('\n');
+            const firstLine = lines[0].trim();
+
+            // Heading: short ALL CAPS line (3-80 chars, >60% uppercase letters)
+            const letters = firstLine.replace(/[^a-zA-Zа-яА-ЯіІїЇєЄґҐ]/g, '');
+            const upper = firstLine.replace(/[^A-ZА-ЯІЇЄҐ]/g, '');
+            const isAllCaps = letters.length > 2 && firstLine.length <= 80 && letters.length > 0 && (upper.length / letters.length) > 0.6;
+
+            // Heading: numbered like "1.", "1.1", "I.", "Chapter", "Розділ", "Глава", etc.
+            const isNumbered = /^(\d+[\.\)]\s|[IVXLC]+[\.\)]\s|Chapter\s|Розділ\s|Глава\s|Частина\s|CHAPTER\s|SECTION\s|Abschnitt\s|Kapitel\s|Teil\s)/i.test(firstLine);
+
+            // Heading: very short standalone line (likely a title)
+            const isShortTitle = lines.length === 1 && firstLine.length <= 60 && firstLine.length >= 2 && !/[.,:;!?]$/.test(firstLine);
+
+            // List detection: lines starting with - * or numbered
+            const isList = lines.every(l => /^\s*[-*•]\s/.test(l) || /^\s*\d+[\.\)]\s/.test(l));
+
+            if (isList) {
+                const items = lines.map(l => {
+                    const text = l.replace(/^\s*[-*•]\s*/, '').replace(/^\s*\d+[\.\)]\s*/, '').trim();
+                    return '<li>' + App.esc(text) + '</li>';
+                });
+                const isOrdered = lines.every(l => /^\s*\d+[\.\)]\s/.test(l));
+                html += (isOrdered ? '<ol class="fv-list">' : '<ul class="fv-list">') + items.join('') + (isOrdered ? '</ol>' : '</ul>');
+            } else if (isAllCaps || (isNumbered && firstLine.length <= 100)) {
+                // Heading + optional body
+                html += '<h3 class="fv-heading">' + App.esc(firstLine) + '</h3>';
+                if (lines.length > 1) {
+                    const rest = lines.slice(1).join('\n').trim();
+                    if (rest) html += '<p class="fv-para">' + App.esc(rest).replace(/\n/g, '<br>') + '</p>';
+                }
+            } else if (isShortTitle && lines.length === 1) {
+                html += '<h4 class="fv-subheading">' + App.esc(firstLine) + '</h4>';
+            } else {
+                // Regular paragraph: preserve single newlines as <br>
+                html += '<p class="fv-para">' + App.esc(trimmed).replace(/\n/g, '<br>') + '</p>';
+            }
+        }
+        return html;
+    },
+
+    // Same but for raw content string → keeps offsets intact for highlighting
+    formatTextPreservingOffsets(raw) {
+        if (!raw || !raw.trim()) return App.esc(raw || '');
+        // For highlighted content we can't restructure into <p>/<h3> because it breaks offset calculations
+        // Instead, add visual paragraph spacing via CSS on newline sequences
+        return App.esc(raw)
+            .replace(/\n{3,}/g, '</p><div class="fv-gap-lg"></div><p class="fv-para-flat">')
+            .replace(/\n\n/g, '</p><p class="fv-para-flat">')
+            .replace(/\n/g, '<br>');
+    },
 
     // ═══════════════════════════════════════════════════════
     //  MODE 1: Single file + Comments sidebar + Color coding
@@ -15,23 +84,27 @@ const FileViewer = {
         this.currentFileName = fileName;
         this.currentProjectId = projectId;
         this.currentContent = '';
+        this._selectionCleanup = null;
 
         this.overlay = document.createElement('div');
         this.overlay.className = 'modal-overlay';
         this.overlay.innerHTML = `
             <div class="modal file-viewer-modal with-comments">
-                <div class="file-viewer-header" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)">
-                    <h3 style="margin:0;font-size:15px">📄 ${App.esc(fileName)}</h3>
-                    <button class="btn btn-secondary btn-sm" onclick="FileViewer.close()">Закрити</button>
+                <div class="fv-header">
+                    <div class="fv-header-left">
+                        <span class="fv-header-icon">&#128196;</span>
+                        <span class="fv-header-name">${App.esc(fileName)}</span>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" onclick="FileViewer.close()">&#10005;</button>
                 </div>
                 <div class="file-viewer-body">
                     <div class="file-viewer-main" id="fv-main">
-                        <div class="loading">Завантаження...</div>
+                        <div class="loading" style="padding:40px;text-align:center">Завантаження...</div>
                     </div>
                     <div class="file-viewer-sidebar" id="fv-sidebar"></div>
                 </div>
-                <div style="padding:8px 16px;border-top:1px solid var(--border);font-size:12px;color:var(--hint)">
-                    💡 Виділіть текст для коментування, пропозицій або копіювання
+                <div class="fv-footer-hint">
+                    &#128161; Виділіть текст для коментування, пропозицій або копіювання
                 </div>
             </div>`;
 
@@ -43,7 +116,6 @@ const FileViewer = {
         };
         document.addEventListener('keydown', escHandler);
 
-        // Load content and comments in parallel
         const contentPromise = this.loadContent(projectId, fileId);
         const commentsPromise = CommentsView.renderInto(
             document.getElementById('fv-sidebar'),
@@ -68,19 +140,18 @@ const FileViewer = {
         try {
             await tryLoad();
         } catch (e) {
-            // Retry once after 1.5s (lazy extraction may need time)
             try {
                 await new Promise(r => setTimeout(r, 1500));
                 await tryLoad();
             } catch (e2) {
                 main.innerHTML = `
-                    <div class="empty" style="padding:40px;text-align:center">
-                        <div style="font-size:48px;margin-bottom:12px">\ud83d\udcc4</div>
-                        <p>Не вдалося завантажити текст</p>
-                        <p style="font-size:13px;color:var(--hint);margin-top:8px">${App.esc(e2.message)}</p>
+                    <div class="fv-empty-state">
+                        <div class="fv-empty-icon">&#128196;</div>
+                        <p class="fv-empty-title">Не вдалося завантажити текст</p>
+                        <p class="fv-empty-detail">${App.esc(e2.message)}</p>
                         <button class="btn btn-primary btn-sm" style="margin-top:12px"
                             onclick="FileViewer.loadContent(${projectId}, ${fileId})">
-                            \u21bb Спробувати знову
+                            &#8635; Спробувати знову
                         </button>
                     </div>`;
             }
@@ -89,10 +160,11 @@ const FileViewer = {
 
     renderSingleContent(container, content) {
         if (!content || content.length === 0) {
-            container.innerHTML = '<div class="empty" style="padding:40px"><p>Файл порожній або текст не витягнуто</p></div>';
+            container.innerHTML = '<div class="fv-empty-state"><div class="fv-empty-icon">&#128196;</div><p class="fv-empty-title">Файл порожній або текст не витягнуто</p></div>';
             return;
         }
-        container.innerHTML = `<div class="file-text-content" id="fv-text">${App.esc(content).replace(/\n/g, '<br>')}</div>`;
+        const formatted = this.formatText(content);
+        container.innerHTML = `<div class="file-text-content" id="fv-text">${formatted}</div>`;
         this.attachSelectionHandler(container);
     },
 
@@ -105,7 +177,7 @@ const FileViewer = {
         const anchored = comments.filter(c => c.start_offset != null && c.end_offset != null && c.start_offset !== c.end_offset);
 
         if (anchored.length === 0) {
-            textEl.innerHTML = App.esc(this.currentContent).replace(/\n/g, '<br>');
+            textEl.innerHTML = this.formatText(this.currentContent);
             this.attachSelectionHandler(textEl.parentElement);
             return;
         }
@@ -113,7 +185,7 @@ const FileViewer = {
         // Sort by start_offset
         anchored.sort((a, b) => a.start_offset - b.start_offset || (b.end_offset - b.start_offset) - (a.end_offset - a.start_offset));
 
-        // Build non-overlapping spans
+        // Build highlighted content with proper formatting
         const text = this.currentContent;
         const spans = [];
         let lastEnd = 0;
@@ -141,15 +213,16 @@ const FileViewer = {
             spans.push({ text: text.slice(lastEnd), cls: null });
         }
 
-        let html = '';
+        let html = '<p class="fv-para-flat">';
         for (const sp of spans) {
-            const escaped = App.esc(sp.text).replace(/\n/g, '<br>');
+            const escaped = this.formatTextPreservingOffsets(sp.text);
             if (sp.cls) {
                 html += `<mark class="${sp.cls}" data-comment-ids="${(sp.ids || []).join(',')}" onclick="FileViewer.onHighlightClick(event)">${escaped}</mark>`;
             } else {
                 html += escaped;
             }
         }
+        html += '</p>';
         textEl.innerHTML = html;
         this.attachSelectionHandler(textEl.parentElement);
     },
@@ -162,8 +235,8 @@ const FileViewer = {
         const commentEl = document.querySelector(`.comment-item[data-id="${ids[0]}"]`);
         if (commentEl) {
             commentEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            commentEl.style.outline = '2px solid var(--btn)';
-            setTimeout(() => commentEl.style.outline = '', 2000);
+            commentEl.classList.add('comment-flash');
+            setTimeout(() => commentEl.classList.remove('comment-flash'), 2000);
         }
     },
 
@@ -184,12 +257,14 @@ const FileViewer = {
         }
     },
 
-    // Selection handler — shows 3-button toolbar
+    // Selection handler — shows 3-button toolbar on text selection
     attachSelectionHandler(container) {
         if (!container) return;
+        if (this._selectionCleanup) this._selectionCleanup();
+
         const textEl = container.querySelector('.file-text-content') || container;
 
-        textEl.addEventListener('mouseup', () => {
+        const onMouseUp = () => {
             document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
 
             const selection = window.getSelection();
@@ -202,12 +277,12 @@ const FileViewer = {
 
             const toolbar = document.createElement('div');
             toolbar.className = 'selection-toolbar';
-            toolbar.style.top = `${rect.bottom + 5}px`;
-            toolbar.style.left = `${Math.max(8, rect.left)}px`;
+            toolbar.style.top = `${rect.bottom + window.scrollY + 6}px`;
+            toolbar.style.left = `${Math.max(8, rect.left + window.scrollX)}px`;
             toolbar.innerHTML = `
-                <button onclick="FileViewer.startComment()">💬 Коментар</button>
-                <button onclick="FileViewer.startSuggestion()">✏️ Пропозиція</button>
-                <button onclick="FileViewer.copyQuote()">📋 Копіювати</button>`;
+                <button onclick="FileViewer.startComment()" title="Додати коментар">&#128172; Коментар</button>
+                <button onclick="FileViewer.startSuggestion()" title="Запропонувати зміну">&#9998; Пропозиція</button>
+                <button onclick="FileViewer.copyQuote()" title="Скопіювати цитату">&#128203; Копіювати</button>`;
             document.body.appendChild(toolbar);
 
             this._pendingSelection = {
@@ -217,13 +292,21 @@ const FileViewer = {
             };
 
             setTimeout(() => toolbar.remove(), 8000);
-        });
+        };
 
-        document.addEventListener('mousedown', (e) => {
+        const onMouseDown = (e) => {
             if (!e.target.closest('.selection-toolbar')) {
                 document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
             }
-        });
+        };
+
+        textEl.addEventListener('mouseup', onMouseUp);
+        document.addEventListener('mousedown', onMouseDown);
+
+        this._selectionCleanup = () => {
+            textEl.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('mousedown', onMouseDown);
+        };
     },
 
     calculateOffsets(range, container) {
@@ -258,7 +341,11 @@ const FileViewer = {
             quoted_text: this._pendingSelection.text
         });
 
-        if (CommentsView.quill) CommentsView.quill.focus();
+        const editorEl = document.querySelector('.sidebar-editor .ql-editor') || document.getElementById('comment-editor');
+        if (editorEl) {
+            editorEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            if (CommentsView.quill) CommentsView.quill.focus();
+        }
     },
 
     startSuggestion() {
@@ -274,11 +361,10 @@ const FileViewer = {
 
     copyQuote() {
         document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
-        const selection = window.getSelection();
-        const selectedText = selection.toString().trim();
-        if (!selectedText) { App.toast('Спочатку виділіть текст', 'warning'); return; }
+        const sel = this._pendingSelection;
+        if (!sel || !sel.text) { App.toast('Спочатку виділіть текст', 'warning'); return; }
 
-        const quoteText = `«${selectedText}»\n— ${this.currentFileName}`;
+        const quoteText = '\u00AB' + sel.text + '\u00BB\n\u2014 ' + this.currentFileName;
         navigator.clipboard.writeText(quoteText).then(() => {
             App.toast('Цитату скопійовано', 'success');
         }).catch(() => {
@@ -294,6 +380,7 @@ const FileViewer = {
     },
 
     close() {
+        if (this._selectionCleanup) { this._selectionCleanup(); this._selectionCleanup = null; }
         if (this.overlay) { this.overlay.remove(); this.overlay = null; }
         document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
         this._pendingSelection = null;
@@ -312,23 +399,26 @@ const FileViewer = {
         this.overlay.className = 'modal-overlay';
         this.overlay.innerHTML = `
             <div class="modal file-viewer-modal sidebyside">
-                <div class="file-viewer-header" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)">
-                    <h3 style="margin:0;font-size:15px">↔ Порівняння: оригінал / переклад</h3>
-                    <button class="btn btn-secondary btn-sm" onclick="FileViewer.close()">Закрити</button>
+                <div class="fv-header">
+                    <div class="fv-header-left">
+                        <span class="fv-header-icon">&#8596;</span>
+                        <span class="fv-header-name">Порівняння: оригінал / переклад</span>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" onclick="FileViewer.close()">&#10005;</button>
                 </div>
                 <div class="file-viewer-panels" id="fv-panels">
                     <div class="file-panel">
                         <div class="panel-label" id="fv-source-label">ОРИГІНАЛ</div>
-                        <div class="panel-content" id="fv-source"><div class="loading">Завантаження...</div></div>
+                        <div class="panel-content" id="fv-source"><div class="loading" style="padding:30px;text-align:center">Завантаження...</div></div>
                     </div>
                     <div class="file-panel-divider"></div>
                     <div class="file-panel">
                         <div class="panel-label" id="fv-target-label">ПЕРЕКЛАД</div>
-                        <div class="panel-content" id="fv-target"><div class="loading">Завантаження...</div></div>
+                        <div class="panel-content" id="fv-target"><div class="loading" style="padding:30px;text-align:center">Завантаження...</div></div>
                     </div>
                 </div>
-                <div style="padding:8px 16px;border-top:1px solid var(--border);font-size:12px;color:var(--hint)">
-                    💡 Наведіть на абзац для підсвічування відповідника. Натисніть для фіксації.
+                <div class="fv-footer-hint">
+                    &#128161; Наведіть на абзац для підсвічування відповідника. Натисніть для фіксації.
                 </div>
             </div>`;
 
@@ -346,12 +436,12 @@ const FileViewer = {
         try {
             const data = await API.getFilePair(projectId, fileId);
 
-            document.getElementById('fv-source-label').textContent = `ОРИГІНАЛ — ${data.source_file.name}`;
-            document.getElementById('fv-target-label').textContent = `ПЕРЕКЛАД — ${data.target_file.name}`;
+            document.getElementById('fv-source-label').textContent = 'ОРИГІНАЛ \u2014 ' + (data.source_file.name || '');
+            document.getElementById('fv-target-label').textContent = 'ПЕРЕКЛАД \u2014 ' + (data.target_file.name || '');
 
             if (!data.source_file.content && !data.target_file.content) {
-                srcEl.innerHTML = '<div class="empty" style="padding:30px"><p>Текст не витягнуто</p></div>';
-                tgtEl.innerHTML = '<div class="empty" style="padding:30px"><p>Текст не витягнуто</p></div>';
+                srcEl.innerHTML = '<div class="fv-empty-state"><p>Текст не витягнуто</p></div>';
+                tgtEl.innerHTML = '<div class="fv-empty-state"><p>Текст не витягнуто</p></div>';
                 return;
             }
 
@@ -367,7 +457,7 @@ const FileViewer = {
 
             this.setupSyncScroll(srcEl, tgtEl);
         } catch (e) {
-            srcEl.innerHTML = `<div class="empty"><p style="color:var(--hint)">Помилка: ${App.esc(e.message)}</p></div>`;
+            srcEl.innerHTML = '<div class="fv-empty-state"><p>' + App.esc(e.message) + '</p></div>';
             tgtEl.innerHTML = '';
         }
     },
@@ -385,7 +475,6 @@ const FileViewer = {
         if (src.length === 0) return tgt.map((_, i) => ({ segIdx: i, srcIdx: [], tgtIdx: [i] }));
         if (tgt.length === 0) return src.map((_, i) => ({ segIdx: i, srcIdx: [i], tgtIdx: [] }));
 
-        // Fast path: equal count → 1:1
         if (src.length === tgt.length) {
             return src.map((_, i) => ({ segIdx: i, srcIdx: [i], tgtIdx: [i] }));
         }
@@ -416,27 +505,22 @@ const FileViewer = {
             for (let j = 0; j <= m; j++) {
                 if (dp[i][j] === INF) continue;
                 const cur = dp[i][j];
-                // 1:1
                 if (i < n && j < m) {
                     const c = cur + costFn(sL[i], tL[j]);
                     if (c < dp[i + 1][j + 1]) { dp[i + 1][j + 1] = c; bt[i + 1][j + 1] = [1, 1]; }
                 }
-                // 2:1
                 if (i + 1 < n && j < m) {
                     const c = cur + costFn(sL[i] + sL[i + 1], tL[j]);
                     if (c < dp[i + 2][j + 1]) { dp[i + 2][j + 1] = c; bt[i + 2][j + 1] = [2, 1]; }
                 }
-                // 1:2
                 if (i < n && j + 1 < m) {
                     const c = cur + costFn(sL[i], tL[j] + tL[j + 1]);
                     if (c < dp[i + 1][j + 2]) { dp[i + 1][j + 2] = c; bt[i + 1][j + 2] = [1, 2]; }
                 }
-                // Skip source
                 if (i < n) {
                     const c = cur + 3;
                     if (c < dp[i + 1][j]) { dp[i + 1][j] = c; bt[i + 1][j] = [1, 0]; }
                 }
-                // Skip target
                 if (j < m) {
                     const c = cur + 3;
                     if (c < dp[i][j + 1]) { dp[i][j + 1] = c; bt[i][j + 1] = [0, 1]; }
@@ -444,7 +528,6 @@ const FileViewer = {
             }
         }
 
-        // Backtrack
         const segments = [];
         let i = n, j = m;
         while (i > 0 || j > 0) {
@@ -479,21 +562,20 @@ const FileViewer = {
             const srcText = seg.srcIdx.map(i => srcParas[i] || '').join('\n\n');
             const tgtText = seg.tgtIdx.map(i => tgtParas[i] || '').join('\n\n');
 
-            const emptySpan = '<span style="color:var(--hint);font-style:italic">—</span>';
-            srcHtml += `<div class="text-segment" data-seg-idx="${idx}" data-side="source">${srcText ? App.esc(srcText) : emptySpan}</div>`;
-            tgtHtml += `<div class="text-segment" data-seg-idx="${idx}" data-side="target">${tgtText ? App.esc(tgtText) : emptySpan}</div>`;
+            const emptySpan = '<span class="seg-empty">\u2014</span>';
+            srcHtml += `<div class="text-segment" data-seg-idx="${idx}" data-side="source">${srcText ? App.esc(srcText).replace(/\n/g, '<br>') : emptySpan}</div>`;
+            tgtHtml += `<div class="text-segment" data-seg-idx="${idx}" data-side="target">${tgtText ? App.esc(tgtText).replace(/\n/g, '<br>') : emptySpan}</div>`;
         }
 
         srcEl.innerHTML = srcHtml;
         tgtEl.innerHTML = tgtHtml;
 
-        // Cross-highlight events
         const allSegs = document.querySelectorAll('.text-segment');
         allSegs.forEach(seg => {
             seg.addEventListener('mouseenter', () => {
                 if (this.lockedSegIdx !== null) return;
                 const idx = seg.dataset.segIdx;
-                document.querySelectorAll(`.text-segment[data-seg-idx="${idx}"]`).forEach(s => s.classList.add('seg-highlight'));
+                document.querySelectorAll('.text-segment[data-seg-idx="' + idx + '"]').forEach(s => s.classList.add('seg-highlight'));
             });
             seg.addEventListener('mouseleave', () => {
                 if (this.lockedSegIdx !== null) return;
@@ -510,10 +592,10 @@ const FileViewer = {
                     s.classList.remove('seg-locked', 'seg-highlight');
                 });
                 this.lockedSegIdx = idx;
-                document.querySelectorAll(`.text-segment[data-seg-idx="${idx}"]`).forEach(s => s.classList.add('seg-locked'));
+                document.querySelectorAll('.text-segment[data-seg-idx="' + idx + '"]').forEach(s => s.classList.add('seg-locked'));
 
                 const otherSide = seg.dataset.side === 'source' ? 'target' : 'source';
-                const counterpart = document.querySelector(`.text-segment[data-seg-idx="${idx}"][data-side="${otherSide}"]`);
+                const counterpart = document.querySelector('.text-segment[data-seg-idx="' + idx + '"][data-side="' + otherSide + '"]');
                 if (counterpart) counterpart.scrollIntoView({ behavior: 'smooth', block: 'center' });
             });
         });
