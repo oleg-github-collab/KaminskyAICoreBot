@@ -1046,11 +1046,28 @@ pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
         if (try content_stmt.step()) {
             const content = content_stmt.columnText(0) orelse "";
             const method = content_stmt.columnText(1) orelse "";
-            // If we have non-empty content, return it
+            // If we have non-empty content, validate it first
             if (content.len > 0) {
-                const content_owned: []const u8 = try res.arena.dupe(u8, content);
-                try res.json(.{ .content = content_owned, .file_name = file_name }, .{});
-                return;
+                // Detect binary garbage in cache: count control chars (< 0x20 except \n \r \t)
+                var bad_chars: usize = 0;
+                const check_len = @min(content.len, 1024);
+                for (content[0..check_len]) |ch| {
+                    if (ch < 0x20 and ch != '\n' and ch != '\r' and ch != '\t') bad_chars += 1;
+                }
+                if (bad_chars * 10 > check_len) {
+                    // >10% control chars = garbage — clear cache and re-extract
+                    std.log.warn("Bad cached content for file_id={d} ({d}/{d} control chars), clearing", .{ file_id, bad_chars, check_len });
+                    var del_stmt = a.db.prepare("DELETE FROM document_content WHERE file_id = ?") catch null;
+                    if (del_stmt) |*ds| {
+                        ds.bindInt(1, file_id) catch {};
+                        ds.exec() catch {};
+                        ds.deinit();
+                    }
+                } else {
+                    const content_owned: []const u8 = try res.arena.dupe(u8, content);
+                    try res.json(.{ .content = content_owned, .file_name = file_name }, .{});
+                    return;
+                }
             }
             // If extraction failed before, try again from disk (don't return empty)
             if (std.mem.eql(u8, method, "failed")) {

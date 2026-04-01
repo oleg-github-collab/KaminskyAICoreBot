@@ -282,17 +282,40 @@ def _ocr_pdf(file_bytes: bytes) -> Optional[str]:
 
 
 def _extract_docx(file_bytes: bytes, filename: str) -> dict:
-    """DOCX: full extraction — paragraphs, tables, headers, footnotes."""
+    """DOCX: rich extraction with heading styles, bold/italic, lists via markdown."""
     from docx import Document
 
     doc = Document(io.BytesIO(file_bytes))
     parts = []
 
-    # Paragraphs (main body)
     for para in doc.paragraphs:
         text = para.text.strip()
-        if text:
-            parts.append(text)
+        if not text:
+            continue
+
+        # Detect heading level from style
+        style_name = (para.style.name or "").lower() if para.style else ""
+        style_id = (para.style.style_id or "").lower() if para.style else ""
+        heading_level = _detect_heading_level(style_name, style_id)
+
+        formatted = _format_runs(para)
+        if not formatted:
+            continue
+
+        if heading_level == 1:
+            parts.append(f"# {formatted}")
+        elif heading_level == 2:
+            parts.append(f"## {formatted}")
+        elif heading_level == 3:
+            parts.append(f"### {formatted}")
+        elif heading_level >= 4:
+            parts.append(f"#### {formatted}")
+        elif "list" in style_name or "bullet" in style_name or "liste" in style_name:
+            parts.append(f"- {formatted}")
+        elif "quote" in style_name or "zitat" in style_name:
+            parts.append(f"> {formatted}")
+        else:
+            parts.append(formatted)
 
     # Tables
     for table in doc.tables:
@@ -313,7 +336,68 @@ def _extract_docx(file_bytes: bytes, filename: str) -> dict:
                     if text:
                         parts.append(text)
 
-    return _result("\n\n".join(parts), "docx_full", "docx")
+    return _result("\n\n".join(parts), "docx_rich", "docx")
+
+
+def _detect_heading_level(style_name: str, style_id: str) -> int:
+    """Detect heading level from DOCX style name/id. Returns 0 for non-headings."""
+    # Check style_id first (more reliable, standardized)
+    if "heading1" in style_id or style_id == "title":
+        return 1
+    if "heading2" in style_id or style_id == "subtitle":
+        return 2
+    if "heading3" in style_id:
+        return 3
+    if "heading4" in style_id or "heading5" in style_id or "heading6" in style_id:
+        return 4
+
+    # Fallback: check localized style_name
+    for pattern, level in [
+        ("heading 1", 1), ("heading 2", 2), ("heading 3", 3), ("heading 4", 4),
+        ("überschrift 1", 1), ("überschrift 2", 2), ("überschrift 3", 3), ("überschrift 4", 4),
+        ("заголовок 1", 1), ("заголовок 2", 2), ("заголовок 3", 3), ("заголовок 4", 4),
+        ("titre 1", 1), ("titre 2", 2), ("titre 3", 3),
+        ("title", 1), ("subtitle", 2), ("titel", 1), ("untertitel", 2),
+    ]:
+        if pattern in style_name:
+            return level
+
+    # Generic heading detection
+    if "heading" in style_id or "heading" in style_name:
+        return 3
+
+    return 0
+
+
+def _format_runs(para) -> str:
+    """Format paragraph runs with bold/italic as markdown markers."""
+    if not para.runs:
+        return para.text.strip()
+
+    parts = []
+    for run in para.runs:
+        text = run.text
+        if not text:
+            continue
+        is_bold = run.bold is True
+        is_italic = run.italic is True
+
+        if is_bold and is_italic:
+            parts.append(f"***{text}***")
+        elif is_bold:
+            parts.append(f"**{text}**")
+        elif is_italic:
+            parts.append(f"*{text}*")
+        else:
+            parts.append(text)
+
+    result = "".join(parts).strip()
+
+    # Clean up adjacent identical markers: **text****more** → **text more**
+    result = result.replace("****", " ").replace("****** ", " ")
+    result = result.replace("** **", " ").replace("***  ***", " ")
+
+    return result
 
 
 def _extract_doc(file_bytes: bytes, filename: str) -> dict:

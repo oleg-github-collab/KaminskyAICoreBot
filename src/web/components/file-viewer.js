@@ -10,11 +10,36 @@ const FileViewer = {
 
     // ═══════════════════════════════════════════════════════
     //  Smart text formatting — paragraphs, headings, lists
+    //  Supports: markdown markers from processor + plain heuristics
     // ═══════════════════════════════════════════════════════
-    formatText(raw) {
-        if (!raw || !raw.trim()) return '';
 
-        // Split into paragraphs by double newlines (or 3+ newlines)
+    // Coerce any value to a string safely
+    _toStr(raw) {
+        if (!raw) return '';
+        if (typeof raw === 'string') return raw;
+        if (Array.isArray(raw)) {
+            // Zig []u8 → integer array: try to decode as char codes
+            try {
+                if (raw.length > 0 && typeof raw[0] === 'number') {
+                    const chunks = [];
+                    for (let i = 0; i < raw.length; i += 4096) {
+                        chunks.push(String.fromCharCode.apply(null, raw.slice(i, i + 4096)));
+                    }
+                    return chunks.join('');
+                }
+            } catch(e) { /* fall through */ }
+            return '';
+        }
+        return String(raw);
+    },
+
+    formatText(raw) {
+        raw = this._toStr(raw);
+        if (!raw.trim()) return '';
+
+        // Detect markdown-style markers from processor (## Heading, **bold**)
+        const hasMarkdown = /^#{1,4}\s/m.test(raw) || /\*\*[^*]+\*\*/.test(raw);
+
         const blocks = raw.split(/\n{2,}/).filter(b => b.trim());
         if (blocks.length === 0) return '<p class="fv-para">' + App.esc(raw) + '</p>';
 
@@ -22,54 +47,128 @@ const FileViewer = {
         for (const block of blocks) {
             const trimmed = block.trim();
             if (!trimmed) continue;
-
-            // Detect headings: ALL CAPS short lines, or lines like "Chapter N", "Section N", numbered headings
-            const lines = trimmed.split('\n');
-            const firstLine = lines[0].trim();
-
-            // Heading: short ALL CAPS line (3-80 chars, >60% uppercase letters)
-            const letters = firstLine.replace(/[^a-zA-Zа-яА-ЯіІїЇєЄґҐ]/g, '');
-            const upper = firstLine.replace(/[^A-ZА-ЯІЇЄҐ]/g, '');
-            const isAllCaps = letters.length > 2 && firstLine.length <= 80 && letters.length > 0 && (upper.length / letters.length) > 0.6;
-
-            // Heading: numbered like "1.", "1.1", "I.", "Chapter", "Розділ", "Глава", etc.
-            const isNumbered = /^(\d+[\.\)]\s|[IVXLC]+[\.\)]\s|Chapter\s|Розділ\s|Глава\s|Частина\s|CHAPTER\s|SECTION\s|Abschnitt\s|Kapitel\s|Teil\s)/i.test(firstLine);
-
-            // Heading: very short standalone line (likely a title)
-            const isShortTitle = lines.length === 1 && firstLine.length <= 60 && firstLine.length >= 2 && !/[.,:;!?]$/.test(firstLine);
-
-            // List detection: lines starting with - * or numbered
-            const isList = lines.every(l => /^\s*[-*•]\s/.test(l) || /^\s*\d+[\.\)]\s/.test(l));
-
-            if (isList) {
-                const items = lines.map(l => {
-                    const text = l.replace(/^\s*[-*•]\s*/, '').replace(/^\s*\d+[\.\)]\s*/, '').trim();
-                    return '<li>' + App.esc(text) + '</li>';
-                });
-                const isOrdered = lines.every(l => /^\s*\d+[\.\)]\s/.test(l));
-                html += (isOrdered ? '<ol class="fv-list">' : '<ul class="fv-list">') + items.join('') + (isOrdered ? '</ol>' : '</ul>');
-            } else if (isAllCaps || (isNumbered && firstLine.length <= 100)) {
-                // Heading + optional body
-                html += '<h3 class="fv-heading">' + App.esc(firstLine) + '</h3>';
-                if (lines.length > 1) {
-                    const rest = lines.slice(1).join('\n').trim();
-                    if (rest) html += '<p class="fv-para">' + App.esc(rest).replace(/\n/g, '<br>') + '</p>';
-                }
-            } else if (isShortTitle && lines.length === 1) {
-                html += '<h4 class="fv-subheading">' + App.esc(firstLine) + '</h4>';
-            } else {
-                // Regular paragraph: preserve single newlines as <br>
-                html += '<p class="fv-para">' + App.esc(trimmed).replace(/\n/g, '<br>') + '</p>';
-            }
+            html += hasMarkdown ? this._renderMdBlock(trimmed) : this._renderPlainBlock(trimmed);
         }
         return html;
     },
 
-    // Same but for raw content string → keeps offsets intact for highlighting
+    // ── Markdown-aware block rendering ──
+    _renderMdBlock(block) {
+        const lines = block.split('\n');
+        let html = '';
+        let listItems = [];
+        let listType = null;
+
+        const flushList = () => {
+            if (listItems.length > 0) {
+                const tag = listType === 'ol' ? 'ol' : 'ul';
+                html += '<' + tag + ' class="fv-list">' + listItems.join('') + '</' + tag + '>';
+                listItems = [];
+                listType = null;
+            }
+        };
+
+        for (const line of lines) {
+            const t = line.trim();
+            if (!t) { flushList(); continue; }
+
+            // Headings: # H1 → <h2>, ## H2 → <h3>, ### H3 → <h4>, #### → <h5>
+            const hm = t.match(/^(#{1,4})\s+(.+)$/);
+            if (hm) {
+                flushList();
+                const lvl = hm[1].length + 1;
+                const cls = lvl <= 3 ? 'fv-heading' : 'fv-subheading';
+                html += '<h' + lvl + ' class="' + cls + '">' + this._escInline(hm[2]) + '</h' + lvl + '>';
+                continue;
+            }
+
+            // Blockquote: > text
+            if (t.startsWith('> ')) {
+                flushList();
+                html += '<blockquote class="fv-quote">' + this._escInline(t.slice(2)) + '</blockquote>';
+                continue;
+            }
+
+            // Unordered list: - item, * item, • item
+            const ulm = t.match(/^[-*\u2022]\s+(.+)$/);
+            if (ulm) {
+                if (listType !== 'ul') flushList();
+                listType = 'ul';
+                listItems.push('<li>' + this._escInline(ulm[1]) + '</li>');
+                continue;
+            }
+
+            // Ordered list: 1. item, 2) item
+            const olm = t.match(/^\d+[\.\)]\s+(.+)$/);
+            if (olm) {
+                if (listType !== 'ol') flushList();
+                listType = 'ol';
+                listItems.push('<li>' + this._escInline(olm[1]) + '</li>');
+                continue;
+            }
+
+            flushList();
+            html += '<p class="fv-para">' + this._escInline(t) + '</p>';
+        }
+        flushList();
+        return html;
+    },
+
+    // Escape HTML + render inline markdown: ***bold-italic***, **bold**, *italic*
+    _escInline(text) {
+        let s = App.esc(text);
+        s = s.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        s = s.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+        return s;
+    },
+
+    // ── Plain-text heuristic block rendering (no markdown markers) ──
+    _renderPlainBlock(block) {
+        const trimmed = block.trim();
+        const lines = trimmed.split('\n');
+        const firstLine = lines[0].trim();
+
+        // ALL CAPS heading (3-80 chars, >60% uppercase)
+        const letters = firstLine.replace(/[^a-zA-Z\u0400-\u04FF\u0490-\u04FF]/g, '');
+        const upper = firstLine.replace(/[^A-Z\u0410-\u042F\u0406\u0407\u0404\u0490]/g, '');
+        const isAllCaps = letters.length > 2 && firstLine.length <= 80 && letters.length > 0 && (upper.length / letters.length) > 0.6;
+
+        // Numbered heading: "1.", "I.", "Chapter", "Розділ", etc.
+        const isNumbered = /^(\d+[\.\)]\s|[IVXLC]+[\.\)]\s|Chapter\s|Розділ\s|Глава\s|Частина\s|CHAPTER\s|SECTION\s|Abschnitt\s|Kapitel\s|Teil\s)/i.test(firstLine);
+
+        // Short standalone title
+        const isShortTitle = lines.length === 1 && firstLine.length <= 60 && firstLine.length >= 2 && !/[.,:;!?]$/.test(firstLine);
+
+        // List block (all lines start with list markers)
+        const isList = lines.length > 0 && lines.every(l => /^\s*[-*\u2022]\s/.test(l) || /^\s*\d+[\.\)]\s/.test(l));
+
+        if (isList) {
+            const items = lines.map(l => {
+                const text = l.replace(/^\s*[-*\u2022]\s*/, '').replace(/^\s*\d+[\.\)]\s*/, '').trim();
+                return '<li>' + App.esc(text) + '</li>';
+            });
+            const isOrdered = lines.every(l => /^\s*\d+[\.\)]\s/.test(l));
+            return (isOrdered ? '<ol class="fv-list">' : '<ul class="fv-list">') + items.join('') + (isOrdered ? '</ol>' : '</ul>');
+        }
+        if (isAllCaps || (isNumbered && firstLine.length <= 100)) {
+            let html = '<h3 class="fv-heading">' + App.esc(firstLine) + '</h3>';
+            if (lines.length > 1) {
+                const rest = lines.slice(1).join('\n').trim();
+                if (rest) html += '<p class="fv-para">' + App.esc(rest).replace(/\n/g, '<br>') + '</p>';
+            }
+            return html;
+        }
+        if (isShortTitle && lines.length === 1) {
+            return '<h4 class="fv-subheading">' + App.esc(firstLine) + '</h4>';
+        }
+        return '<p class="fv-para">' + App.esc(trimmed).replace(/\n/g, '<br>') + '</p>';
+    },
+
+    // Offset-preserving format (for highlighted text — can't restructure into headings)
     formatTextPreservingOffsets(raw) {
-        if (!raw || !raw.trim()) return App.esc(raw || '');
-        // For highlighted content we can't restructure into <p>/<h3> because it breaks offset calculations
-        // Instead, add visual paragraph spacing via CSS on newline sequences
+        raw = this._toStr(raw);
+        if (!raw.trim()) return App.esc(raw);
         return App.esc(raw)
             .replace(/\n{3,}/g, '</p><div class="fv-gap-lg"></div><p class="fv-para-flat">')
             .replace(/\n\n/g, '</p><p class="fv-para-flat">')
@@ -133,7 +232,7 @@ const FileViewer = {
 
         const tryLoad = async () => {
             const data = await API.getFileContent(projectId, fileId);
-            this.currentContent = data.content || '';
+            this.currentContent = this._toStr(data.content);
             this.renderSingleContent(main, this.currentContent);
         };
 
@@ -159,12 +258,13 @@ const FileViewer = {
     },
 
     renderSingleContent(container, content) {
-        if (!content || content.length === 0) {
+        content = this._toStr(content);
+        if (!content.trim()) {
             container.innerHTML = '<div class="fv-empty-state"><div class="fv-empty-icon">&#128196;</div><p class="fv-empty-title">Файл порожній або текст не витягнуто</p></div>';
             return;
         }
         const formatted = this.formatText(content);
-        container.innerHTML = `<div class="file-text-content" id="fv-text">${formatted}</div>`;
+        container.innerHTML = '<div class="file-text-content" id="fv-text">' + formatted + '</div>';
         this.attachSelectionHandler(container);
     },
 
@@ -258,31 +358,51 @@ const FileViewer = {
     },
 
     // Selection handler — shows 3-button toolbar on text selection
+    // Tracks cursor position for reliable placement with large selections
     attachSelectionHandler(container) {
         if (!container) return;
         if (this._selectionCleanup) this._selectionCleanup();
 
         const textEl = container.querySelector('.file-text-content') || container;
+        let lastPtr = { x: 0, y: 0 };
 
-        const onMouseUp = () => {
+        const showToolbar = () => {
             document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
 
             const selection = window.getSelection();
-            const selectedText = selection.toString().trim();
+            const selectedText = (selection || '').toString().trim();
             if (!selectedText || selectedText.length === 0) return;
 
-            const range = selection.getRangeAt(0);
-            const rect = range.getBoundingClientRect();
+            let range;
+            try { range = selection.getRangeAt(0); } catch(e) { return; }
             const offsets = this.calculateOffsets(range, textEl);
+
+            // Position: use range rect if reasonable, else use last cursor position
+            const rect = range.getBoundingClientRect();
+            let top, left;
+
+            if (rect && rect.height > 0 && rect.height < window.innerHeight * 0.7 && rect.bottom > 0) {
+                top = rect.bottom + window.scrollY + 6;
+                left = rect.left + window.scrollX;
+            } else {
+                // Large selection or off-screen rect — use last known cursor position
+                top = lastPtr.y + window.scrollY + 12;
+                left = lastPtr.x + window.scrollX - 80;
+            }
+
+            // Clamp within viewport
+            left = Math.max(8, Math.min(left, window.innerWidth + window.scrollX - 300));
+            top = Math.min(top, window.scrollY + window.innerHeight - 60);
 
             const toolbar = document.createElement('div');
             toolbar.className = 'selection-toolbar';
-            toolbar.style.top = `${rect.bottom + window.scrollY + 6}px`;
-            toolbar.style.left = `${Math.max(8, rect.left + window.scrollX)}px`;
-            toolbar.innerHTML = `
-                <button onclick="FileViewer.startComment()" title="Додати коментар">&#128172; Коментар</button>
-                <button onclick="FileViewer.startSuggestion()" title="Запропонувати зміну">&#9998; Пропозиція</button>
-                <button onclick="FileViewer.copyQuote()" title="Скопіювати цитату">&#128203; Копіювати</button>`;
+            toolbar.style.position = 'absolute';
+            toolbar.style.top = top + 'px';
+            toolbar.style.left = left + 'px';
+            toolbar.innerHTML =
+                '<button onclick="FileViewer.startComment()" title="Додати коментар">&#128172; Коментар</button>' +
+                '<button onclick="FileViewer.startSuggestion()" title="Запропонувати зміну">&#9998; Пропозиція</button>' +
+                '<button onclick="FileViewer.copyQuote()" title="Скопіювати цитату">&#128203; Копіювати</button>';
             document.body.appendChild(toolbar);
 
             this._pendingSelection = {
@@ -291,20 +411,35 @@ const FileViewer = {
                 end_offset: offsets.end
             };
 
-            setTimeout(() => toolbar.remove(), 8000);
+            setTimeout(() => { if (toolbar.parentNode) toolbar.remove(); }, 15000);
         };
 
+        const onPointerMove = (e) => {
+            lastPtr = { x: e.clientX || 0, y: e.clientY || 0 };
+        };
+        const onTouchMove = (e) => {
+            const t = e.touches[0];
+            if (t) lastPtr = { x: t.clientX, y: t.clientY };
+        };
+        const onMouseUp = () => { setTimeout(showToolbar, 30); };
+        const onTouchEnd = () => { setTimeout(showToolbar, 250); };
         const onMouseDown = (e) => {
             if (!e.target.closest('.selection-toolbar')) {
                 document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
             }
         };
 
+        textEl.addEventListener('mousemove', onPointerMove);
+        textEl.addEventListener('touchmove', onTouchMove, { passive: true });
         textEl.addEventListener('mouseup', onMouseUp);
+        textEl.addEventListener('touchend', onTouchEnd);
         document.addEventListener('mousedown', onMouseDown);
 
         this._selectionCleanup = () => {
+            textEl.removeEventListener('mousemove', onPointerMove);
+            textEl.removeEventListener('touchmove', onTouchMove);
             textEl.removeEventListener('mouseup', onMouseUp);
+            textEl.removeEventListener('touchend', onTouchEnd);
             document.removeEventListener('mousedown', onMouseDown);
         };
     },
@@ -439,21 +574,17 @@ const FileViewer = {
             document.getElementById('fv-source-label').textContent = 'ОРИГІНАЛ \u2014 ' + (data.source_file.name || '');
             document.getElementById('fv-target-label').textContent = 'ПЕРЕКЛАД \u2014 ' + (data.target_file.name || '');
 
-            if (!data.source_file.content && !data.target_file.content) {
+            const srcContent = this._toStr(data.source_file.content);
+            const tgtContent = this._toStr(data.target_file.content);
+
+            if (!srcContent.trim() && !tgtContent.trim()) {
                 srcEl.innerHTML = '<div class="fv-empty-state"><p>Текст не витягнуто</p></div>';
                 tgtEl.innerHTML = '<div class="fv-empty-state"><p>Текст не витягнуто</p></div>';
                 return;
             }
 
-            const alignment = this.alignParagraphs(
-                data.source_file.content || '',
-                data.target_file.content || ''
-            );
-
-            this.renderAlignedPanels(srcEl, tgtEl, alignment,
-                data.source_file.content || '',
-                data.target_file.content || ''
-            );
+            const alignment = this.alignParagraphs(srcContent, tgtContent);
+            this.renderAlignedPanels(srcEl, tgtEl, alignment, srcContent, tgtContent);
 
             this.setupSyncScroll(srcEl, tgtEl);
         } catch (e) {

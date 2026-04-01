@@ -2078,6 +2078,17 @@ select:focus-visible {
 .fv-list { margin: 0 0 16px; padding-left: 24px; }
 .fv-list li { margin-bottom: 4px; line-height: 1.6; }
 
+/* Blockquote */
+.fv-quote {
+    margin: 12px 0 16px; padding: 8px 16px;
+    border-left: 3px solid var(--btn); background: rgba(102, 126, 234, 0.04);
+    border-radius: 0 6px 6px 0; color: var(--text); font-style: italic;
+}
+
+/* Inline formatting from markdown */
+.file-text-content strong { font-weight: 700; }
+.file-text-content em { font-style: italic; }
+
 /* Empty state */
 .fv-empty-state { padding: 40px; text-align: center; }
 .fv-empty-icon { font-size: 48px; margin-bottom: 12px; }
