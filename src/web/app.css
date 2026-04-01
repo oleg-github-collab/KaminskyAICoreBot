@@ -2144,6 +2144,41 @@ select:focus-visible {
     .doc-html th, .doc-html td { padding: 5px 6px; }
 }
 
+/* Native PDF rendering (pdf.js) */
+.pdf-native-pages {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 8px; padding: 16px; overflow-y: auto;
+}
+.pdf-page-canvas {
+    max-width: 100%; height: auto;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.12);
+    border-radius: 2px; background: #fff;
+}
+.pdf-page-label {
+    font-size: 11px; color: var(--hint); margin-bottom: 8px;
+}
+
+/* Native DOCX rendering (docx-preview) */
+.docx-native-wrapper {
+    padding: 0; overflow-y: auto; background: #f8f8f8; border-radius: 6px;
+}
+.docx-native-wrapper .docx-wrapper {
+    background: #f8f8f8 !important; padding: 8px !important;
+}
+.docx-native-wrapper .docx-wrapper > section.docx-native {
+    box-shadow: 0 1px 6px rgba(0,0,0,0.12); margin: 0 auto 12px;
+    background: #fff; border-radius: 2px;
+}
+.docx-native-wrapper .docx-wrapper > section.docx-native:last-child { margin-bottom: 0; }
+
+@media (max-width: 767px) {
+    .pdf-native-pages { padding: 8px; gap: 6px; }
+    .docx-native-wrapper .docx-wrapper { padding: 4px !important; }
+    .docx-native-wrapper .docx-wrapper > section.docx-native {
+        min-width: 0 !important; width: 100% !important; padding: 12px !important;
+    }
+}
+
 /* ═══════════════════════════════════════════════════════════════
    End File Viewer
    ═══════════════════════════════════════════════════════════════ */

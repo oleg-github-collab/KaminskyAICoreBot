@@ -10,6 +10,112 @@ const FileViewer = {
     _selectionCleanup: null,
 
     // ═══════════════════════════════════════════════════════
+    //  Native document rendering (pdf.js, docx-preview)
+    // ═══════════════════════════════════════════════════════
+    _getExt(fileName) {
+        if (!fileName) return '';
+        const dot = fileName.lastIndexOf('.');
+        return dot < 0 ? '' : fileName.slice(dot + 1).toLowerCase();
+    },
+
+    _loadScript(src) {
+        return new Promise((resolve, reject) => {
+            if (document.querySelector('script[src="' + src + '"]')) { resolve(); return; }
+            const s = document.createElement('script');
+            s.src = src;
+            s.onload = resolve;
+            s.onerror = () => reject(new Error('Failed to load: ' + src));
+            document.head.appendChild(s);
+        });
+    },
+
+    async _ensurePdfJs() {
+        if (window.pdfjsLib) return;
+        await this._loadScript('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js');
+        if (window.pdfjsLib) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc =
+                'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+        }
+    },
+
+    async _ensureDocxPreview() {
+        if (window.docx) return;
+        await this._loadScript('https://cdn.jsdelivr.net/npm/docx-preview@0.3.3/dist/docx-preview.min.js');
+    },
+
+    async _renderNative(container, projectId, fileId, ext) {
+        container.innerHTML = '<div class="loading" style="padding:40px;text-align:center">Завантаження документу...</div>';
+        const blob = await API.downloadFileBlob(projectId, fileId);
+
+        if (ext === 'pdf') {
+            await this._renderPdfNative(container, blob);
+        } else if (ext === 'docx') {
+            await this._renderDocxNative(container, blob);
+        }
+        this.currentContentType = 'native';
+    },
+
+    async _renderPdfNative(container, blob) {
+        await this._ensurePdfJs();
+        const arrayBuffer = await blob.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+
+        container.innerHTML = '';
+        const pagesDiv = document.createElement('div');
+        pagesDiv.className = 'pdf-native-pages';
+        pagesDiv.id = 'fv-text';
+        container.appendChild(pagesDiv);
+
+        const containerWidth = container.clientWidth - 32;
+
+        for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const unscaledVp = page.getViewport({ scale: 1 });
+            const scale = Math.min(containerWidth / unscaledVp.width, 2.0);
+            const viewport = page.getViewport({ scale });
+
+            const canvas = document.createElement('canvas');
+            canvas.className = 'pdf-page-canvas';
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            pagesDiv.appendChild(canvas);
+
+            await page.render({
+                canvasContext: canvas.getContext('2d'),
+                viewport
+            }).promise;
+
+            // Page number label
+            const label = document.createElement('div');
+            label.className = 'pdf-page-label';
+            label.textContent = i + ' / ' + pdf.numPages;
+            pagesDiv.appendChild(label);
+        }
+    },
+
+    async _renderDocxNative(container, blob) {
+        await this._ensureDocxPreview();
+        const arrayBuffer = await blob.arrayBuffer();
+
+        container.innerHTML = '';
+        const wrapper = document.createElement('div');
+        wrapper.className = 'docx-native-wrapper';
+        wrapper.id = 'fv-text';
+        container.appendChild(wrapper);
+
+        await docx.renderAsync(arrayBuffer, wrapper, null, {
+            className: 'docx-native',
+            inWrapper: true,
+            ignoreWidth: false,
+            ignoreHeight: true,
+            ignoreFonts: false,
+            breakPages: true,
+            ignoreLastRenderedPageBreak: true,
+            experimental: true,
+        });
+    },
+
+    // ═══════════════════════════════════════════════════════
     //  Smart text formatting — paragraphs, headings, lists
     //  Supports: markdown markers from processor + plain heuristics
     // ═══════════════════════════════════════════════════════
@@ -245,6 +351,19 @@ const FileViewer = {
         const main = document.getElementById('fv-main');
         if (!main) return;
 
+        const ext = this._getExt(this.currentFileName);
+
+        // Native rendering for PDF and DOCX — pixel-perfect display
+        if (ext === 'pdf' || ext === 'docx') {
+            try {
+                await this._renderNative(main, projectId, fileId, ext);
+                return;
+            } catch (e) {
+                console.warn('Native rendering failed, falling back to text extraction:', e);
+            }
+        }
+
+        // Text extraction for other formats + fallback
         const tryLoad = async () => {
             const data = await API.getFileContent(projectId, fileId);
             this.currentContent = this._toStr(data.content);
@@ -262,7 +381,7 @@ const FileViewer = {
                 main.innerHTML = `
                     <div class="fv-empty-state">
                         <div class="fv-empty-icon">&#128196;</div>
-                        <p class="fv-empty-title">Не вдалося завантажити текст</p>
+                        <p class="fv-empty-title">Не вдалося завантажити файл</p>
                         <p class="fv-empty-detail">${App.esc(e2.message)}</p>
                         <button class="btn btn-primary btn-sm" style="margin-top:12px"
                             onclick="FileViewer.loadContent(${projectId}, ${fileId})">
@@ -313,8 +432,8 @@ const FileViewer = {
         const textEl = document.getElementById('fv-text');
         if (!textEl || !this.currentContent) return;
 
-        // For HTML content, skip offset-based highlighting (not compatible)
-        if (this.currentContentType === 'html') return;
+        // For HTML/native content, skip offset-based highlighting (not compatible)
+        if (this.currentContentType === 'html' || this.currentContentType === 'native') return;
 
         const comments = CommentsView.comments || [];
         const anchored = comments.filter(c => c.start_offset != null && c.end_offset != null && c.start_offset !== c.end_offset);

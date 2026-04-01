@@ -293,6 +293,18 @@ def _ocr_pdf(file_bytes: bytes) -> Optional[str]:
         return None
 
 
+def _clean_pdf_text(text: str) -> str:
+    """Clean PyMuPDF extracted text — fix encoding artifacts."""
+    import re
+    # Replace Unicode replacement character with space
+    text = text.replace('\ufffd', ' ')
+    # Replace various Unicode spaces with regular space
+    text = re.sub(r'[\u00a0\u2000-\u200b\u202f\u205f\u3000\ufeff]', ' ', text)
+    # Collapse multiple spaces
+    text = re.sub(r'  +', ' ', text)
+    return text
+
+
 def _extract_pdf_rich(file_bytes: bytes) -> tuple:
     """Build semantic HTML from PDF using PyMuPDF font analysis.
 
@@ -353,8 +365,10 @@ def _extract_pdf_rich(file_bytes: bytes) -> tuple:
             for line in block.get("lines", []):
                 spans = []
                 for span in line.get("spans", []):
-                    text = span.get("text", "")
-                    if not text:
+                    text = _clean_pdf_text(span.get("text", ""))
+                    if not text.strip():
+                        if text:
+                            spans.append({"t": " ", "s": span.get("size", body_size), "b": False, "i": False, "sup": False, "m": False})
                         continue
                     flags = span.get("flags", 0)
                     spans.append({

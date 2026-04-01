@@ -1150,6 +1150,71 @@ pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
     }, .{});
 }
 
+/// Serve raw file binary for native rendering (pdf.js, docx-preview).
+pub fn handleDownloadFile(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const file_id = parseIntParam(req, "file_id") catch {
+        jsonError(res, 400, "Некоректний ідентифікатор файлу.");
+        return;
+    };
+    const a = app();
+
+    var stmt = try a.db.prepare(
+        "SELECT original_name, storage_path FROM files WHERE id = ? AND project_id = ? LIMIT 1",
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, file_id);
+    try stmt.bindInt(2, access.project_id);
+
+    if (!(try stmt.step())) {
+        jsonError(res, 404, "Файл не знайдено.");
+        return;
+    }
+
+    const original_name = try dupOrEmpty(res.arena, stmt.columnText(0));
+    const storage_path = try dupOrEmpty(res.arena, stmt.columnText(1));
+
+    const file = std.fs.openFileAbsolute(storage_path, .{}) catch {
+        jsonError(res, 404, "Файл недоступний на сервері.");
+        return;
+    };
+    defer file.close();
+
+    const file_data = file.readToEndAlloc(res.arena, 50 * 1024 * 1024) catch {
+        jsonError(res, 500, "Помилка читання файлу.");
+        return;
+    };
+
+    res.header("Content-Type", getMimeType(original_name));
+    res.header("Cache-Control", "private, max-age=300");
+    res.body = file_data;
+}
+
+fn getMimeType(name: []const u8) []const u8 {
+    const dot_idx = std.mem.lastIndexOfScalar(u8, name, '.') orelse return "application/octet-stream";
+    const ext = name[dot_idx..];
+    if (eqlLowerExt(ext, ".pdf")) return "application/pdf";
+    if (eqlLowerExt(ext, ".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    if (eqlLowerExt(ext, ".doc")) return "application/msword";
+    if (eqlLowerExt(ext, ".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    if (eqlLowerExt(ext, ".pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    if (eqlLowerExt(ext, ".txt")) return "text/plain; charset=utf-8";
+    if (eqlLowerExt(ext, ".rtf")) return "application/rtf";
+    if (eqlLowerExt(ext, ".odt")) return "application/vnd.oasis.opendocument.text";
+    return "application/octet-stream";
+}
+
+fn eqlLowerExt(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    var i: usize = 0;
+    while (i < a.len) : (i += 1) {
+        const lower: u8 = if (a[i] >= 'A' and a[i] <= 'Z') a[i] + 32 else a[i];
+        if (lower != b[i]) return false;
+    }
+    return true;
+}
+
 /// Store extracted text in document_content cache (best-effort, errors logged)
 fn storeContentCache(a: anytype, file_id: i64, content: []const u8, method: []const u8) void {
     var stmt = a.db.prepare(

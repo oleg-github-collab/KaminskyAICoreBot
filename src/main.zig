@@ -163,6 +163,7 @@ pub fn main() !void {
     router.get("/api/projects/:project_id/files", miniapp_api.handleListFiles, .{});
     router.post("/api/projects/:project_id/files", miniapp_api.handleUploadFile, .{});
     router.get("/api/projects/:project_id/files/:file_id/content", miniapp_api.handleGetFileContent, .{});
+    router.get("/api/projects/:project_id/files/:file_id/download", miniapp_api.handleDownloadFile, .{});
     router.delete("/api/projects/:project_id/files/:file_id", miniapp_api.handleDeleteFile, .{});
     router.get("/api/projects/:project_id/team", miniapp_api.handleListTeam, .{});
     router.post("/api/projects/:project_id/team/invite", miniapp_api.handleCreateInvite, .{});

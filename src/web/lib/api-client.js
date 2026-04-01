@@ -37,6 +37,14 @@ const API = {
         return this.req('GET', '/projects/' + pid + '/files' + q);
     },
     getFileContent(pid, fid) { return this.req('GET', '/projects/' + pid + '/files/' + fid + '/content'); },
+    async downloadFileBlob(pid, fid) {
+        const r = await fetch(this.base + '/projects/' + pid + '/files/' + fid + '/download', {
+            method: 'GET',
+            headers: { 'Authorization': this.initData() }
+        });
+        if (!r.ok) throw new Error('Download failed: ' + r.status);
+        return r.blob();
+    },
     deleteFile(pid, fid) { return this.req('DELETE', '/projects/' + pid + '/files/' + fid); },
     async uploadFiles(pid, files, category, onProgress) {
         const CONCURRENT = 5;
