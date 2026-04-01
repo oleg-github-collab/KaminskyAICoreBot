@@ -936,18 +936,20 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
 
             // Fallback: try Python processor
             if (!extracted) {
-                if (processor_client.extractTextWithRetry(a.allocator, &a.config, store_path, original_name)) |text_content| {
-                    defer a.allocator.free(text_content);
+                if (processor_client.extractTextWithRetry(a.allocator, &a.config, store_path, original_name)) |result| {
+                    defer a.allocator.free(result.text);
+                    defer a.allocator.free(result.content_type);
+                    const method = if (std.mem.eql(u8, result.content_type, "html")) "python_html" else "python_text";
                     var content_stmt = try a.db.prepare(
                         "INSERT OR REPLACE INTO document_content (file_id, content_text, extracted_at, extraction_method) VALUES (?, ?, ?, ?)",
                     );
                     defer content_stmt.deinit();
                     try content_stmt.bindInt(1, file_id);
-                    try content_stmt.bindText(2, text_content);
+                    try content_stmt.bindText(2, result.text);
                     try content_stmt.bindInt(3, std.time.timestamp());
-                    try content_stmt.bindText(4, "python_processor");
+                    try content_stmt.bindText(4, method);
                     try content_stmt.exec();
-                    std.log.info("Processor extracted {d} chars from file_id={d} ({s})", .{ text_content.len, file_id, original_name });
+                    std.log.info("Processor extracted {d} chars from file_id={d} ({s})", .{ result.text.len, file_id, original_name });
                 } else |err| {
                     std.log.warn("All extraction failed for file_id={d} ({s}): {any}", .{ file_id, original_name, err });
                     // Don't store empty placeholder — let lazy extraction retry later
