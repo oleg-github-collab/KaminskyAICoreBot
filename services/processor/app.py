@@ -127,7 +127,7 @@ async def ocr_image(
     lang: str = Form("ukr+deu+eng+rus+pol"),
     authorization: str = Header(default=""),
 ):
-    """OCR: extract text from image or scanned PDF via Tesseract."""
+    """OCR: extract text from image or scanned PDF via PaddleOCR."""
     verify_auth(authorization)
     file_bytes = await file.read()
     filename = file.filename or "unknown"
@@ -135,7 +135,7 @@ async def ocr_image(
 
     try:
         if ext == "pdf":
-            # Scanned PDF → pdf2image → tesseract
+            # Scanned PDF → pdf2image → PaddleOCR
             text = document_engine._ocr_pdf(file_bytes)
             if text:
                 return {"text": text, "length": len(text), "method": "ocr_pdf", "format": "pdf"}

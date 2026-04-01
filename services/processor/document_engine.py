@@ -1,17 +1,18 @@
 """Document Engine — unified text extraction for all formats.
 
 Extraction priority per format:
-  PDF:  pdfplumber → PyPDF2 → OCR (tesseract) → pdftotext
-  DOCX: python-docx (paragraphs + tables + headers)
+  PDF:  PyMuPDF rich → pdfplumber → PyPDF2 → pdftotext → OCR (PaddleOCR)
+  DOCX: mammoth HTML → python-docx markdown
   DOC:  LibreOffice → mammoth → size heuristic
-  XLSX: openpyxl (all sheets, all cells)
+  XLSX: calamine (Rust, fast) → openpyxl fallback
+  XLS:  calamine (native .xls) → LibreOffice conversion
   PPTX: python-pptx (slides + notes + tables)
   RTF:  striprtf
   ODT:  python-docx via odt→docx or direct XML
   HTML: BeautifulSoup
   EPUB: ebooklib + BeautifulSoup
   TXT/CSV/JSON/XML: chardet decode
-  Images: OCR (tesseract)
+  Images: OCR (PaddleOCR — cyrillic + latin auto-detect)
 """
 
 import io
@@ -97,11 +98,17 @@ def extract_metadata(file_bytes: bytes, filename: str) -> dict:
             meta["tables"] = len(doc.tables)
 
         elif ext == "xlsx":
-            from openpyxl import load_workbook
-            wb = load_workbook(io.BytesIO(file_bytes), read_only=True)
-            meta["sheets"] = wb.sheetnames
-            meta["sheet_count"] = len(wb.sheetnames)
-            wb.close()
+            try:
+                from python_calamine import CalamineWorkbook
+                wb = CalamineWorkbook.from_buffer(file_bytes)
+                meta["sheets"] = wb.sheet_names
+                meta["sheet_count"] = len(wb.sheet_names)
+            except Exception:
+                from openpyxl import load_workbook
+                wb = load_workbook(io.BytesIO(file_bytes), read_only=True)
+                meta["sheets"] = wb.sheetnames
+                meta["sheet_count"] = len(wb.sheetnames)
+                wb.close()
 
         elif ext == "pptx":
             from pptx import Presentation
@@ -158,21 +165,37 @@ def extract_tables(file_bytes: bytes, filename: str) -> dict:
                 })
 
         elif ext in ("xlsx", "xls"):
-            from openpyxl import load_workbook
-            wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
-            for sheet_name in wb.sheetnames:
-                ws = wb[sheet_name]
-                rows = []
-                for row in ws.iter_rows(max_row=100, values_only=True):
-                    rows.append([str(c) if c is not None else "" for c in row])
-                if rows:
-                    tables.append({
-                        "sheet": sheet_name,
-                        "rows": len(rows),
-                        "cols": max(len(r) for r in rows) if rows else 0,
-                        "data": rows,
-                    })
-            wb.close()
+            try:
+                from python_calamine import CalamineWorkbook
+                wb = CalamineWorkbook.from_buffer(file_bytes)
+                for sheet_name in wb.sheet_names:
+                    all_rows = wb.get_sheet_by_name(sheet_name).to_python()
+                    str_rows = []
+                    for row in all_rows[:100]:
+                        str_rows.append([str(c) if c is not None else "" for c in row])
+                    if str_rows:
+                        tables.append({
+                            "sheet": sheet_name,
+                            "rows": len(str_rows),
+                            "cols": max(len(r) for r in str_rows) if str_rows else 0,
+                            "data": str_rows,
+                        })
+            except Exception:
+                from openpyxl import load_workbook
+                wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+                for sheet_name in wb.sheetnames:
+                    ws = wb[sheet_name]
+                    rows = []
+                    for row in ws.iter_rows(max_row=100, values_only=True):
+                        rows.append([str(c) if c is not None else "" for c in row])
+                    if rows:
+                        tables.append({
+                            "sheet": sheet_name,
+                            "rows": len(rows),
+                            "cols": max(len(r) for r in rows) if rows else 0,
+                            "data": rows,
+                        })
+                wb.close()
 
         elif ext == "pptx":
             from pptx import Presentation
@@ -264,32 +287,102 @@ def _extract_pdf(file_bytes: bytes, filename: str) -> dict:
         except Exception as e:
             logger.warning(f"pdftotext failed: {e}")
 
-    # Method 4: OCR for scanned PDFs
+    # Method 4: OCR for scanned PDFs (PaddleOCR)
     if len(text.strip()) < pages * 50 and pages > 0:
         ocr_text = _ocr_pdf(file_bytes)
         if ocr_text and len(ocr_text.strip()) > len(text.strip()):
             text = ocr_text
-            method = "ocr_tesseract"
+            method = "ocr_paddleocr"
 
     result = _result(text, method or "pdf_empty", "pdf")
     result["pages"] = pages
     return result
 
 
+# ─── PaddleOCR engine (lazy-initialized, cached per language) ─────────────────
+
+_ocr_engines = {}
+
+
+def _get_ocr(lang: str = "cyrillic"):
+    """Get or create a PaddleOCR engine for given language model."""
+    global _ocr_engines
+    if lang not in _ocr_engines:
+        from paddleocr import PaddleOCR
+        _ocr_engines[lang] = PaddleOCR(
+            use_angle_cls=True,
+            lang=lang,
+            show_log=False,
+            use_gpu=False,
+        )
+    return _ocr_engines[lang]
+
+
+def _ocr_single_image(img_np, lang: str = "cyrillic") -> tuple:
+    """OCR a single numpy image array. Returns (text, avg_confidence)."""
+    try:
+        ocr = _get_ocr(lang)
+        result = ocr.ocr(img_np, cls=True)
+
+        if not result or not result[0]:
+            return "", 0.0
+
+        lines = []
+        total_conf = 0.0
+        count = 0
+
+        for line_data in result[0]:
+            text = line_data[1][0]
+            conf = line_data[1][1]
+            lines.append(text)
+            total_conf += conf
+            count += 1
+
+        avg_conf = total_conf / count if count > 0 else 0.0
+        return "\n".join(lines), avg_conf
+    except Exception as e:
+        logger.warning(f"PaddleOCR ({lang}) failed: {e}")
+        return "", 0.0
+
+
 def _ocr_pdf(file_bytes: bytes) -> Optional[str]:
-    """OCR a PDF using pdf2image + tesseract."""
+    """OCR a PDF using pdf2image + PaddleOCR.
+
+    Auto-detects script from first page: tries cyrillic model first,
+    falls back to latin if confidence is higher. Uses winning model
+    for all remaining pages.
+    """
     try:
         from pdf2image import convert_from_bytes
-        import pytesseract
+        import numpy as np
 
         images = convert_from_bytes(file_bytes, dpi=300, fmt="png")
-        parts = []
-        for img in images[:50]:  # Limit to 50 pages
-            text = pytesseract.image_to_string(img, lang="ukr+deu+eng+rus+pol")
-            parts.append(text)
+        if not images:
+            return None
+
+        # Detect best language model from first page
+        first_np = np.array(images[0])
+        text_cyr, conf_cyr = _ocr_single_image(first_np, "cyrillic")
+        text_lat, conf_lat = _ocr_single_image(first_np, "latin")
+
+        if conf_lat > conf_cyr and len(text_lat.strip()) >= len(text_cyr.strip()):
+            best_lang = "latin"
+            parts = [text_lat]
+        else:
+            best_lang = "cyrillic"
+            parts = [text_cyr]
+
+        logger.info(f"OCR language auto-detect: {best_lang} (cyr={conf_cyr:.2f}, lat={conf_lat:.2f})")
+
+        # OCR remaining pages with best model
+        for img in images[1:50]:
+            text, _ = _ocr_single_image(np.array(img), best_lang)
+            if text.strip():
+                parts.append(text)
+
         return "\n\n".join(parts)
     except Exception as e:
-        logger.warning(f"OCR failed: {e}")
+        logger.warning(f"PaddleOCR PDF failed: {e}")
         return None
 
 
@@ -678,7 +771,30 @@ def _extract_doc(file_bytes: bytes, filename: str) -> dict:
 
 
 def _extract_xlsx(file_bytes: bytes, filename: str) -> dict:
-    """XLSX: all sheets, all cells, with sheet names."""
+    """XLSX: calamine (fast Rust reader) → openpyxl fallback."""
+    # Primary: python-calamine — 5-10x faster, supports xlsx/xls/xlsb/ods
+    try:
+        from python_calamine import CalamineWorkbook
+
+        wb = CalamineWorkbook.from_buffer(file_bytes)
+        parts = []
+
+        for sheet_name in wb.sheet_names:
+            rows = wb.get_sheet_by_name(sheet_name).to_python()
+            sheet_lines = [f"=== {sheet_name} ==="]
+            for row in rows:
+                cells = [str(c) if c is not None else "" for c in row]
+                line = " | ".join(cells).strip()
+                if line and line != "|":
+                    sheet_lines.append(line)
+            if len(sheet_lines) > 1:
+                parts.append("\n".join(sheet_lines))
+
+        return _result("\n\n".join(parts), "xlsx_calamine", "xlsx")
+    except Exception as e:
+        logger.warning(f"calamine xlsx failed: {e}, falling back to openpyxl")
+
+    # Fallback: openpyxl
     from openpyxl import load_workbook
 
     wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
@@ -696,11 +812,34 @@ def _extract_xlsx(file_bytes: bytes, filename: str) -> dict:
             parts.append("\n".join(sheet_lines))
 
     wb.close()
-    return _result("\n\n".join(parts), "xlsx_full", "xlsx")
+    return _result("\n\n".join(parts), "xlsx_openpyxl", "xlsx")
 
 
 def _extract_xls(file_bytes: bytes, filename: str) -> dict:
-    """Legacy .xls: try LibreOffice conversion."""
+    """Legacy .xls: calamine (native support) → LibreOffice conversion fallback."""
+    # Primary: calamine reads .xls natively (no conversion needed)
+    try:
+        from python_calamine import CalamineWorkbook
+
+        wb = CalamineWorkbook.from_buffer(file_bytes)
+        parts = []
+
+        for sheet_name in wb.sheet_names:
+            rows = wb.get_sheet_by_name(sheet_name).to_python()
+            sheet_lines = [f"=== {sheet_name} ==="]
+            for row in rows:
+                cells = [str(c) if c is not None else "" for c in row]
+                line = " | ".join(cells).strip()
+                if line and line != "|":
+                    sheet_lines.append(line)
+            if len(sheet_lines) > 1:
+                parts.append("\n".join(sheet_lines))
+
+        return _result("\n\n".join(parts), "xls_calamine", "xls")
+    except Exception as e:
+        logger.warning(f"calamine xls failed: {e}")
+
+    # Fallback: LibreOffice conversion
     try:
         with tempfile.NamedTemporaryFile(suffix=".xls", delete=False) as tmp:
             tmp.write(file_bytes)
@@ -723,7 +862,7 @@ def _extract_xls(file_bytes: bytes, filename: str) -> dict:
             r["method"] = "xls_via_libreoffice"
             return r
     except Exception as e:
-        logger.warning(f"xls conversion failed: {e}")
+        logger.warning(f"xls LibreOffice conversion failed: {e}")
 
     return {"text": "", "length": 0, "method": "xls_unsupported", "format": "xls"}
 
@@ -850,18 +989,28 @@ def _extract_epub(file_bytes: bytes, filename: str) -> dict:
 
 
 def _extract_image_ocr(file_bytes: bytes, filename: str) -> dict:
-    """Image OCR via tesseract."""
+    """Image OCR via PaddleOCR with automatic script detection."""
+    ext = os.path.splitext(filename.lower())[1].lstrip(".")
     try:
-        import pytesseract
         from PIL import Image
+        import numpy as np
 
         img = Image.open(io.BytesIO(file_bytes))
-        text = pytesseract.image_to_string(img, lang="ukr+deu+eng+rus+pol")
-        return _result(text, "ocr_tesseract", os.path.splitext(filename.lower())[1].lstrip("."))
+        img_np = np.array(img)
+
+        # Try both models, pick best result
+        text_cyr, conf_cyr = _ocr_single_image(img_np, "cyrillic")
+        text_lat, conf_lat = _ocr_single_image(img_np, "latin")
+
+        if conf_lat > conf_cyr and len(text_lat.strip()) >= len(text_cyr.strip()):
+            text = text_lat
+        else:
+            text = text_cyr if text_cyr else text_lat
+
+        return _result(text, "ocr_paddleocr", ext)
     except Exception as e:
         logger.warning(f"Image OCR failed: {e}")
-        return {"text": "", "length": 0, "method": "ocr_failed",
-                "format": os.path.splitext(filename.lower())[1].lstrip("."), "error": str(e)}
+        return {"text": "", "length": 0, "method": "ocr_failed", "format": ext, "error": str(e)}
 
 
 def _extract_text_file(file_bytes: bytes, filename: str) -> dict:
