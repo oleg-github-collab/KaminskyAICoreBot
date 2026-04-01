@@ -2149,14 +2149,27 @@ select:focus-visible {
     display: flex; flex-direction: column; align-items: center;
     gap: 8px; padding: 16px; overflow-y: auto;
 }
+.pdf-page-wrapper {
+    position: relative; margin: 0 auto;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.12); border-radius: 2px; background: #fff;
+}
 .pdf-page-canvas {
-    max-width: 100%; height: auto;
-    box-shadow: 0 1px 6px rgba(0,0,0,0.12);
-    border-radius: 2px; background: #fff;
+    display: block; max-width: 100%; height: auto;
 }
 .pdf-page-label {
     font-size: 11px; color: var(--hint); margin-bottom: 8px;
 }
+/* Text layer — invisible selectable text over canvas for commenting */
+.pdf-text-layer {
+    position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+    overflow: hidden; line-height: 1.0; z-index: 1;
+}
+.pdf-text-layer > span {
+    color: transparent; position: absolute; white-space: pre;
+    transform-origin: 0% 0%; cursor: text;
+}
+.pdf-text-layer > span::selection { background: rgba(102, 126, 234, 0.35); }
+.pdf-text-layer > br { display: none; }
 
 /* Native DOCX rendering (docx-preview) */
 .docx-native-wrapper {

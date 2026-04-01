@@ -62,7 +62,7 @@ const FileViewer = {
 
         container.innerHTML = '';
         const pagesDiv = document.createElement('div');
-        pagesDiv.className = 'pdf-native-pages';
+        pagesDiv.className = 'pdf-native-pages file-text-content';
         pagesDiv.id = 'fv-text';
         container.appendChild(pagesDiv);
 
@@ -74,23 +74,43 @@ const FileViewer = {
             const scale = Math.min(containerWidth / unscaledVp.width, 2.0);
             const viewport = page.getViewport({ scale });
 
+            // Wrapper: canvas + selectable text layer on top
+            const pageWrap = document.createElement('div');
+            pageWrap.className = 'pdf-page-wrapper';
+            pageWrap.style.width = viewport.width + 'px';
+            pageWrap.style.height = viewport.height + 'px';
+
             const canvas = document.createElement('canvas');
             canvas.className = 'pdf-page-canvas';
             canvas.width = viewport.width;
             canvas.height = viewport.height;
-            pagesDiv.appendChild(canvas);
+            pageWrap.appendChild(canvas);
+            pagesDiv.appendChild(pageWrap);
 
-            await page.render({
-                canvasContext: canvas.getContext('2d'),
-                viewport
-            }).promise;
+            await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
 
-            // Page number label
+            // Text layer — transparent selectable text over canvas
+            try {
+                const textContent = await page.getTextContent();
+                const textLayerDiv = document.createElement('div');
+                textLayerDiv.className = 'pdf-text-layer';
+                pageWrap.appendChild(textLayerDiv);
+                const task = pdfjsLib.renderTextLayer({
+                    textContent: textContent,
+                    container: textLayerDiv,
+                    viewport: viewport,
+                    textDivs: []
+                });
+                if (task && task.promise) await task.promise;
+            } catch (e) { console.warn('Text layer failed for page ' + i, e); }
+
             const label = document.createElement('div');
             label.className = 'pdf-page-label';
             label.textContent = i + ' / ' + pdf.numPages;
             pagesDiv.appendChild(label);
         }
+
+        this.attachSelectionHandler(container);
     },
 
     async _renderDocxNative(container, blob) {
@@ -99,7 +119,7 @@ const FileViewer = {
 
         container.innerHTML = '';
         const wrapper = document.createElement('div');
-        wrapper.className = 'docx-native-wrapper';
+        wrapper.className = 'docx-native-wrapper file-text-content';
         wrapper.id = 'fv-text';
         container.appendChild(wrapper);
 
@@ -113,6 +133,8 @@ const FileViewer = {
             ignoreLastRenderedPageBreak: true,
             experimental: true,
         });
+
+        this.attachSelectionHandler(container);
     },
 
     // ═══════════════════════════════════════════════════════
