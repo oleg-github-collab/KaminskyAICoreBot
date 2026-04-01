@@ -1059,7 +1059,8 @@ pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
                     }
                 } else {
                     const content_owned: []const u8 = try res.arena.dupe(u8, content);
-                    try res.json(.{ .content = content_owned, .file_name = file_name }, .{});
+                    const ct: []const u8 = if (std.mem.indexOf(u8, method, "html") != null) "html" else "text";
+                    try res.json(.{ .content = content_owned, .file_name = file_name, .content_type = ct }, .{});
                     return;
                 }
             }
@@ -1092,7 +1093,7 @@ pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
             // Text file: use raw content directly — cast []u8 → []const u8 for JSON string
             const text: []const u8 = data;
             storeContentCache(a, file_id, text, "inline_text_lazy");
-            try res.json(.{ .content = text, .file_name = file_name }, .{});
+            try res.json(.{ .content = text, .file_name = file_name, .content_type = @as([]const u8, "text") }, .{});
             return;
         }
 
@@ -1102,20 +1103,23 @@ pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
             if (text_content.len > 0) {
                 const text: []const u8 = text_content;
                 storeContentCache(a, file_id, text, "local_extraction");
-                try res.json(.{ .content = text, .file_name = file_name }, .{});
+                try res.json(.{ .content = text, .file_name = file_name, .content_type = @as([]const u8, "text") }, .{});
                 return;
             }
         } else |err| {
             std.log.info("Local extraction unavailable for file_id={d}: {any}, trying processor...", .{ file_id, err });
         }
 
-        // Fallback: try Python processor extraction (remote, may be slow/unavailable)
-        if (processor_client.extractTextWithRetry(a.allocator, &a.config, storage_path, file_name)) |text_content| {
-            defer a.allocator.free(text_content);
-            if (text_content.len > 0) {
-                const text: []const u8 = text_content;
-                storeContentCache(a, file_id, text, "python_processor_lazy");
-                try res.json(.{ .content = text, .file_name = file_name }, .{});
+        // Fallback: try Python processor extraction (remote — returns rich HTML or text)
+        if (processor_client.extractTextWithRetry(a.allocator, &a.config, storage_path, file_name)) |extraction| {
+            defer a.allocator.free(extraction.text);
+            defer a.allocator.free(extraction.content_type);
+            if (extraction.text.len > 0) {
+                const is_html = std.mem.eql(u8, extraction.content_type, "html");
+                const method_label: []const u8 = if (is_html) "python_html" else "python_text";
+                storeContentCache(a, file_id, extraction.text, method_label);
+                const ct: []const u8 = if (is_html) "html" else "text";
+                try res.json(.{ .content = @as([]const u8, extraction.text), .file_name = file_name, .content_type = ct }, .{});
                 return;
             }
         } else |err| {
@@ -1132,14 +1136,15 @@ pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
             const pages = pricing.estimateDocPages(@intCast(data.len), file_name);
             break :blk std.fmt.bufPrint(&info_buf, "[Документ, ~{d} стор., {d} байт]\n\nТекст цього файлу не вдалося витягти автоматично.", .{ pages, data.len }) catch "Документ";
         };
-        try res.json(.{ .content = info, .file_name = file_name }, .{});
+        try res.json(.{ .content = info, .file_name = file_name, .content_type = @as([]const u8, "text") }, .{});
         return;
     }
 
     // Step 3: File not on disk either — give helpful info, not 404
     try res.json(.{
-        .content = "Файл недоступний на сервері. Завантажте його повторно.",
+        .content = @as([]const u8, "Файл недоступний на сервері. Завантажте його повторно."),
         .file_name = file_name,
+        .content_type = @as([]const u8, "text"),
     }, .{});
 }
 

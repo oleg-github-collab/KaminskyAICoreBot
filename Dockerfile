@@ -1,5 +1,5 @@
 # ==== Stage 1: Build ====
-# FORCE REBUILD: 2026-04-01-pdf-garbage-cache-fix
+# FORCE REBUILD: 2026-04-01-mammoth-html-content-type
 FROM ubuntu:22.04 AS builder
 
 ARG ZIG_VERSION=0.14.0

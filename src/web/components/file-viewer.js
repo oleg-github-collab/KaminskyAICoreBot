@@ -3,6 +3,7 @@ const FileViewer = {
     currentFileName: '',
     currentContent: '',
     currentProjectId: null,
+    currentContentType: 'text',
     overlay: null,
     lockedSegIdx: null,
     _pendingSelection: null,
@@ -247,6 +248,7 @@ const FileViewer = {
         const tryLoad = async () => {
             const data = await API.getFileContent(projectId, fileId);
             this.currentContent = this._toStr(data.content);
+            this.currentContentType = data.content_type || 'text';
             this.renderSingleContent(main, this.currentContent);
         };
 
@@ -271,9 +273,21 @@ const FileViewer = {
         }
     },
 
+    // Sanitize HTML from processor — strip scripts, event handlers, dangerous attrs
+    _sanitizeHtml(html) {
+        let s = html;
+        s = s.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+        s = s.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
+        s = s.replace(/\bon\w+\s*=\s*"[^"]*"/gi, '');
+        s = s.replace(/\bon\w+\s*=\s*'[^']*'/gi, '');
+        s = s.replace(/\bon\w+\s*=\s*[^\s>]+/gi, '');
+        s = s.replace(/javascript\s*:/gi, '');
+        return s;
+    },
+
     renderSingleContent(container, content) {
         content = this._toStr(content);
-        if (!content.trim() || this._isGarbage(content)) {
+        if (!content.trim() || (this.currentContentType !== 'html' && this._isGarbage(content))) {
             const msg = this._isGarbage(content) ? 'Текст витягується повторно... Спробуйте через хвилину.' : 'Файл порожній або текст не витягнуто';
             container.innerHTML = '<div class="fv-empty-state"><div class="fv-empty-icon">&#128196;</div>' +
                 '<p class="fv-empty-title">' + App.esc(msg) + '</p>' +
@@ -281,8 +295,16 @@ const FileViewer = {
                 'onclick="FileViewer.loadContent(' + this.currentProjectId + ',' + this.currentFileId + ')">&#8635; Оновити</button></div>';
             return;
         }
-        const formatted = this.formatText(content);
-        container.innerHTML = '<div class="file-text-content" id="fv-text">' + formatted + '</div>';
+
+        if (this.currentContentType === 'html') {
+            // Rich HTML from processor (mammoth/pymupdf) — render directly
+            const sanitized = this._sanitizeHtml(content);
+            container.innerHTML = '<div class="file-text-content doc-html" id="fv-text">' + sanitized + '</div>';
+        } else {
+            // Plain text / markdown — use existing formatting engine
+            const formatted = this.formatText(content);
+            container.innerHTML = '<div class="file-text-content" id="fv-text">' + formatted + '</div>';
+        }
         this.attachSelectionHandler(container);
     },
 
@@ -290,6 +312,9 @@ const FileViewer = {
     rebuildHighlights() {
         const textEl = document.getElementById('fv-text');
         if (!textEl || !this.currentContent) return;
+
+        // For HTML content, skip offset-based highlighting (not compatible)
+        if (this.currentContentType === 'html') return;
 
         const comments = CommentsView.comments || [];
         const anchored = comments.filter(c => c.start_offset != null && c.end_offset != null && c.start_offset !== c.end_offset);

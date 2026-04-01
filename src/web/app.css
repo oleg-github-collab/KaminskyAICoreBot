@@ -2089,6 +2089,42 @@ select:focus-visible {
 .file-text-content strong { font-weight: 700; }
 .file-text-content em { font-style: italic; }
 
+/* ── Document HTML (mammoth DOCX / PyMuPDF PDF) ── */
+.doc-html h1 { font-size: 1.55em; font-weight: 700; margin: 24px 0 12px; color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+    border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.doc-html h2 { font-size: 1.3em; font-weight: 600; margin: 20px 0 10px; color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif; }
+.doc-html h3 { font-size: 1.12em; font-weight: 600; margin: 16px 0 8px; color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif; }
+.doc-html h4, .doc-html h5, .doc-html h6 { font-size: 1em; font-weight: 600; margin: 12px 0 6px; color: var(--text); }
+.doc-html h1:first-child, .doc-html h2:first-child, .doc-html h3:first-child { margin-top: 0; }
+.doc-html p { margin: 6px 0; line-height: 1.7; }
+.doc-html p:empty { display: none; }
+.doc-html u { text-decoration: underline; }
+.doc-html s, .doc-html del { text-decoration: line-through; color: var(--hint); }
+.doc-html blockquote { border-left: 3px solid var(--btn); padding: 8px 16px; margin: 12px 0;
+    background: rgba(102,126,234,.04); font-style: italic; border-radius: 0 6px 6px 0; }
+.doc-html ul, .doc-html ol { padding-left: 24px; margin: 6px 0; }
+.doc-html li { margin: 3px 0; line-height: 1.6; }
+.doc-html li > ul, .doc-html li > ol { margin: 2px 0; }
+.doc-html table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+.doc-html th, .doc-html td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+.doc-html th { background: var(--bg2); font-weight: 600; }
+.doc-html tr:nth-child(even) td { background: rgba(0,0,0,.02); }
+.doc-html sup { font-size: .75em; vertical-align: super; }
+.doc-html sup a { color: var(--btn); text-decoration: none; font-weight: 600; }
+.doc-html sub { font-size: .75em; vertical-align: sub; }
+.doc-html code { background: var(--bg2); padding: 1px 4px; border-radius: 3px; font-size: .9em; }
+.doc-html a { color: var(--btn); text-decoration: none; }
+.doc-html a:hover { text-decoration: underline; }
+.doc-html .doc-header-footer { margin-top: 20px; padding-top: 14px; border-top: 1px dashed var(--border);
+    color: var(--hint); font-size: 13px; font-style: italic; }
+.doc-html hr.pdf-page-break { border: none; border-top: 2px dashed var(--border); margin: 24px 0; }
+/* Footnotes from mammoth */
+.doc-html ol li[id^="footnote-"] { font-size: 13px; color: var(--hint); margin-bottom: 4px; }
+.doc-html ol li[id^="footnote-"] p { margin: 2px 0; }
+
 /* Empty state */
 .fv-empty-state { padding: 40px; text-align: center; }
 .fv-empty-icon { font-size: 48px; margin-bottom: 12px; }
@@ -2102,6 +2138,10 @@ select:focus-visible {
     .file-viewer-modal { max-width: 100vw; width: 100%; }
     .file-text-content { font-size: 14px; line-height: 1.6; }
     .fv-heading { font-size: 15px; }
+    .doc-html h1 { font-size: 1.3em; }
+    .doc-html h2 { font-size: 1.15em; }
+    .doc-html table { font-size: 12px; }
+    .doc-html th, .doc-html td { padding: 5px 6px; }
 }
 
 /* ═══════════════════════════════════════════════════════════════

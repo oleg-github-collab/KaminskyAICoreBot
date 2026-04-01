@@ -11,6 +11,11 @@ pub const CountResult = struct {
     method: []const u8,
 };
 
+pub const ExtractionResult = struct {
+    text: []const u8,
+    content_type: []const u8, // "html" or "text"
+};
+
 /// Count document pages/chars via Python processor service.
 /// Falls back to local estimate on failure.
 pub fn countDocument(
@@ -639,11 +644,11 @@ pub fn extractTextWithRetry(
     config: *const config_mod.Config,
     file_path: []const u8,
     original_name: []const u8,
-) ![]const u8 {
+) !ExtractionResult {
     var attempt: u8 = 0;
     while (attempt < 3) : (attempt += 1) {
-        if (extractText(allocator, config, file_path, original_name)) |text| {
-            return text;
+        if (extractText(allocator, config, file_path, original_name)) |result| {
+            return result;
         } else |err| {
             if (attempt < 2) {
                 std.log.warn("extractText attempt {d} failed: {any}, retrying...", .{ attempt + 1, err });
@@ -657,13 +662,14 @@ pub fn extractTextWithRetry(
     return error.ProcessorCallFailed;
 }
 
-/// Extract text content from document for quoting.
+/// Extract text content from document for display.
+/// Returns text + content_type ("html" or "text").
 pub fn extractText(
     allocator: std.mem.Allocator,
     config: *const config_mod.Config,
     file_path: []const u8,
     original_name: []const u8,
-) ![]const u8 {
+) !ExtractionResult {
     const processor_url = config.processor_url;
     if (processor_url.len == 0) return error.ProcessorNotConfigured;
 
@@ -717,6 +723,7 @@ pub fn extractText(
     const parsed = std.json.parseFromSlice(struct {
         text: ?[]const u8 = null,
         length: ?i64 = null,
+        content_type: ?[]const u8 = null,
     }, allocator, result.stdout, .{ .ignore_unknown_fields = true }) catch {
         std.log.err("Processor /extract-text: invalid JSON response: {s}", .{result.stdout});
         return error.InvalidProcessorResponse;
@@ -724,7 +731,10 @@ pub fn extractText(
     defer parsed.deinit();
 
     if (parsed.value.text) |text| {
-        return try allocator.dupe(u8, text);
+        return ExtractionResult{
+            .text = try allocator.dupe(u8, text),
+            .content_type = try allocator.dupe(u8, parsed.value.content_type orelse "text"),
+        };
     }
 
     return error.NoTextExtracted;
