@@ -1046,17 +1046,11 @@ pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
         if (try content_stmt.step()) {
             const content = content_stmt.columnText(0) orelse "";
             const method = content_stmt.columnText(1) orelse "";
-            // If we have non-empty content, validate it first
+            // If we have non-empty content, validate it's not garbage
             if (content.len > 0) {
-                // Detect binary garbage in cache: count control chars (< 0x20 except \n \r \t)
-                var bad_chars: usize = 0;
-                const check_len = @min(content.len, 1024);
-                for (content[0..check_len]) |ch| {
-                    if (ch < 0x20 and ch != '\n' and ch != '\r' and ch != '\t') bad_chars += 1;
-                }
-                if (bad_chars * 10 > check_len) {
-                    // >10% control chars = garbage — clear cache and re-extract
-                    std.log.warn("Bad cached content for file_id={d} ({d}/{d} control chars), clearing", .{ file_id, bad_chars, check_len });
+                const is_garbage = isGarbageContent(content);
+                if (is_garbage) {
+                    std.log.warn("Garbage cached content for file_id={d} (len={d}), clearing cache", .{ file_id, content.len });
                     var del_stmt = a.db.prepare("DELETE FROM document_content WHERE file_id = ?") catch null;
                     if (del_stmt) |*ds| {
                         ds.bindInt(1, file_id) catch {};
@@ -1165,6 +1159,38 @@ fn storeContentCache(a: anytype, file_id: i64, content: []const u8, method: []co
     stmt.exec() catch |err| {
         std.log.warn("Failed to exec cache content for file_id={d}: {any}", .{ file_id, err });
     };
+}
+
+/// Check if cached content is garbage (raw binary, PDF bytes, or high control-char ratio).
+fn isGarbageContent(content: []const u8) bool {
+    if (content.len < 10) return false;
+
+    // Check 1: Starts with %PDF- → raw PDF file stored as text
+    if (content.len >= 5 and std.mem.startsWith(u8, content, "%PDF-")) return true;
+
+    // Check 2: Contains PDF internal structure markers → raw PDF bytes decoded as text
+    const scan_len = @min(content.len, 8192);
+    const scan = content[0..scan_len];
+    const has_endobj = std.mem.indexOf(u8, scan, "endobj") != null;
+    const has_endstream = std.mem.indexOf(u8, scan, "endstream") != null;
+    const has_pdf_type = std.mem.indexOf(u8, scan, "/Type") != null;
+    if (has_endobj and has_endstream) return true;
+    if (has_endobj and has_pdf_type) return true;
+
+    // Check 3: Contains DOCX/ZIP XML structure → raw binary stored as text
+    if (std.mem.indexOf(u8, scan, "PK\x03\x04") != null and std.mem.indexOf(u8, scan, "word/") != null) return true;
+
+    // Check 4: High ratio of control characters or non-printable bytes
+    var bad_chars: usize = 0;
+    const check_len = @min(content.len, 2048);
+    for (content[0..check_len]) |ch| {
+        if (ch < 0x20 and ch != '\n' and ch != '\r' and ch != '\t') bad_chars += 1;
+        // Also count high non-UTF8 bytes that indicate binary
+        if (ch >= 0x80 and ch <= 0x9F) bad_chars += 1;
+    }
+    if (check_len > 0 and bad_chars * 8 > check_len) return true; // >12.5% bad chars
+
+    return false;
 }
 
 pub fn handleListTeam(req: *httpz.Request, res: *httpz.Response) !void {

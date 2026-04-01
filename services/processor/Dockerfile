@@ -1,4 +1,5 @@
 FROM python:3.12-slim
+# REBUILD: 2026-04-01-rich-docx-format
 
 # System deps: OCR (tesseract), PDF tools (poppler), file detection
 RUN apt-get update && apt-get install -y --no-install-recommends \

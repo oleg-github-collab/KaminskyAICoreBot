@@ -18,19 +18,33 @@ const FileViewer = {
         if (!raw) return '';
         if (typeof raw === 'string') return raw;
         if (Array.isArray(raw)) {
-            // Zig []u8 → integer array: try to decode as char codes
             try {
                 if (raw.length > 0 && typeof raw[0] === 'number') {
                     const chunks = [];
-                    for (let i = 0; i < raw.length; i += 4096) {
+                    for (let i = 0; i < raw.length; i += 4096)
                         chunks.push(String.fromCharCode.apply(null, raw.slice(i, i + 4096)));
-                    }
                     return chunks.join('');
                 }
             } catch(e) { /* fall through */ }
             return '';
         }
         return String(raw);
+    },
+
+    // Detect raw PDF/binary garbage stored as text
+    _isGarbage(text) {
+        if (!text || text.length < 50) return false;
+        if (text.startsWith('%PDF-')) return true;
+        const s = text.slice(0, 4000);
+        if (s.includes('endobj') && s.includes('endstream')) return true;
+        if (s.includes('endobj') && s.includes('/Type')) return true;
+        let bad = 0;
+        const len = Math.min(text.length, 1000);
+        for (let i = 0; i < len; i++) {
+            const c = text.charCodeAt(i);
+            if (c < 32 && c !== 10 && c !== 13 && c !== 9) bad++;
+        }
+        return bad > len * 0.12;
     },
 
     formatText(raw) {
@@ -259,8 +273,12 @@ const FileViewer = {
 
     renderSingleContent(container, content) {
         content = this._toStr(content);
-        if (!content.trim()) {
-            container.innerHTML = '<div class="fv-empty-state"><div class="fv-empty-icon">&#128196;</div><p class="fv-empty-title">Файл порожній або текст не витягнуто</p></div>';
+        if (!content.trim() || this._isGarbage(content)) {
+            const msg = this._isGarbage(content) ? 'Текст витягується повторно... Спробуйте через хвилину.' : 'Файл порожній або текст не витягнуто';
+            container.innerHTML = '<div class="fv-empty-state"><div class="fv-empty-icon">&#128196;</div>' +
+                '<p class="fv-empty-title">' + App.esc(msg) + '</p>' +
+                '<button class="btn btn-primary btn-sm" style="margin-top:12px" ' +
+                'onclick="FileViewer.loadContent(' + this.currentProjectId + ',' + this.currentFileId + ')">&#8635; Оновити</button></div>';
             return;
         }
         const formatted = this.formatText(content);
