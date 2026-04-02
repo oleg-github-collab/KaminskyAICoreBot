@@ -1,23 +1,23 @@
 /** Workflow progress bar — shows project stage as a horizontal stepper. */
 const WorkflowBar = {
     STAGES: [
-        { key: 'files_uploaded', label: 'Файли', shortLabel: 'Файли', tab: 1 },
-        { key: 'glossary_paid', label: 'Глосарій', shortLabel: 'Глос.', tab: 2 },
-        { key: 'glossary_review', label: 'Глосарій', shortLabel: 'Глос.', tab: 2 },
-        { key: 'glossary_approved', label: 'Глосарій', shortLabel: 'Глос.', tab: 2 },
-        { key: 'translation_paid', label: 'Переклад', shortLabel: 'Перекл.', tab: 4 },
-        { key: 'translation_processing', label: 'Переклад', shortLabel: 'Перекл.', tab: 4 },
-        { key: 'translation_review', label: 'Перевірка', shortLabel: 'Перев.', tab: 1 },
-        { key: 'completed', label: 'Готово', shortLabel: 'Готово', tab: 1 },
+        { key: 'files_uploaded', label: 'Файли', shortLabel: 'Файли', tab: 'files' },
+        { key: 'glossary_paid', label: 'Глосарій', shortLabel: 'Глос.', tab: 'glossary' },
+        { key: 'glossary_review', label: 'Глосарій', shortLabel: 'Глос.', tab: 'glossary' },
+        { key: 'glossary_approved', label: 'Глосарій', shortLabel: 'Глос.', tab: 'glossary' },
+        { key: 'translation_paid', label: 'Переклад', shortLabel: 'Перекл.', tab: 'pricing' },
+        { key: 'translation_processing', label: 'Переклад', shortLabel: 'Перекл.', tab: 'pricing' },
+        { key: 'translation_review', label: 'Перевірка', shortLabel: 'Перев.', tab: 'files' },
+        { key: 'completed', label: 'Готово', shortLabel: 'Готово', tab: 'files' },
     ],
 
     // Collapsed display steps (merge sub-stages into visible steps)
     DISPLAY_STEPS: [
-        { label: 'Файли', shortLabel: 'Файли', stages: ['files_uploaded'], tab: 1 },
-        { label: 'Глосарій', shortLabel: 'Глос.', stages: ['glossary_paid', 'glossary_review', 'glossary_approved'], tab: 2 },
-        { label: 'Переклад', shortLabel: 'Перекл.', stages: ['translation_paid', 'translation_processing'], tab: 4 },
-        { label: 'Перевірка', shortLabel: 'Перев.', stages: ['translation_review'], tab: 1 },
-        { label: 'Готово', shortLabel: 'Готово', stages: ['completed'], tab: 1 },
+        { label: 'Файли', shortLabel: 'Файли', stages: ['files_uploaded'], tab: 'files' },
+        { label: 'Глосарій', shortLabel: 'Глос.', stages: ['glossary_paid', 'glossary_review', 'glossary_approved'], tab: 'glossary' },
+        { label: 'Переклад', shortLabel: 'Перекл.', stages: ['translation_paid', 'translation_processing'], tab: 'pricing' },
+        { label: 'Перевірка', shortLabel: 'Перев.', stages: ['translation_review'], tab: 'files' },
+        { label: 'Готово', shortLabel: 'Готово', stages: ['completed'], tab: 'files' },
     ],
 
     getStepIndex(workflowStage) {
@@ -38,7 +38,7 @@ const WorkflowBar = {
             const isActive = i === currentIdx;
             const dotCls = isCompleted ? 'completed' : isActive ? 'active' : '';
             const icon = isCompleted ? '&#10003;' : (isActive ? '&#9679;' : '');
-            const clickable = isCompleted ? ` onclick="App.navigate(${step.tab})"` : '';
+            const clickable = isCompleted ? ` onclick="App.navigate('${step.tab}')"` : '';
 
             if (i > 0) {
                 const lineCls = i <= currentIdx ? 'completed' : '';

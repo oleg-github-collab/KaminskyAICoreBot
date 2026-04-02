@@ -70,7 +70,8 @@ const FileViewer = {
         pagesDiv.id = 'fv-text';
         container.appendChild(pagesDiv);
 
-        const containerWidth = container.clientWidth - 32;
+        const isMobile = window.innerWidth <= 767;
+        const containerWidth = container.clientWidth - (isMobile ? 8 : 32);
 
         for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
@@ -128,13 +129,14 @@ const FileViewer = {
         wrapper.id = 'fv-text';
         container.appendChild(wrapper);
 
+        const mobileView = window.innerWidth <= 767;
         await docx.renderAsync(arrayBuffer, wrapper, null, {
             className: 'docx-native',
             inWrapper: true,
-            ignoreWidth: false,
+            ignoreWidth: mobileView, // on mobile: ignore page width to prevent overflow
             ignoreHeight: true,
             ignoreFonts: false,
-            breakPages: true,
+            breakPages: !mobileView, // no page breaks on mobile for continuous scroll
             ignoreLastRenderedPageBreak: true,
             experimental: true,
         });

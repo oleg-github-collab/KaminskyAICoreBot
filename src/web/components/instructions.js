@@ -23,6 +23,9 @@ const InstructionsView = {
                         <button class="btn btn-sm btn-secondary" onclick="InstructionsView.refresh()" data-tooltip="Оновити">
                             \ud83d\udd04
                         </button>
+                        <button class="btn btn-sm btn-secondary" onclick="InstructionsView.uploadWordFile()" ${canEdit ? '' : 'disabled'} data-tooltip="Завантажити файл">
+                            \ud83d\udcc2 Файл
+                        </button>
                         <button class="btn btn-sm btn-primary" onclick="InstructionsView.addInstruction()" ${canEdit ? '' : 'disabled'}>
                             + Додати
                         </button>
@@ -32,7 +35,9 @@ const InstructionsView = {
                 <div class="info-banner">
                     <div class="info-banner-icon">\ud83d\udca1</div>
                     <div class="info-banner-text">
-                        <strong>Як це працює:</strong> Перетягніть інструкції у потрібному порядку. Вони будуть об'єднані у промпт для створення глосарію.
+                        <strong>Як це працює:</strong> Перетягніть інструкції у потрібному порядку. Можете також
+                        <a href="#" onclick="event.preventDefault(); InstructionsView.uploadWordFile()" style="color:var(--btn);font-weight:600">завантажити Word/PDF файл</a>
+                        з побажаннями \u2014 текст буде витягнуто автоматично.
                     </div>
                 </div>
 
@@ -449,6 +454,153 @@ const InstructionsView = {
 
     createTemplate() {
         this.addInstruction();
+    },
+
+    // ─── Word/PDF File Upload for Extended Instructions ──────────────────
+    uploadWordFile() {
+        if (!App.currentProject) return;
+
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.docx,.doc,.pdf,.txt,.rtf';
+        input.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            await this.processUploadedFile(file);
+        });
+        input.click();
+    },
+
+    async processUploadedFile(file) {
+        const pid = App.currentProject?.id;
+        if (!pid) return;
+
+        // Show loading overlay
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal" style="text-align:center;padding:32px">
+                <div class="loading-spinner"></div>
+                <p style="margin-top:16px;color:var(--hint);font-size:14px">Обробка файлу «${App.esc(file.name)}»...</p>
+                <p style="color:var(--hint);font-size:12px;margin-top:8px">Витягуємо текст для інструкцій</p>
+            </div>`;
+        document.body.appendChild(overlay);
+
+        try {
+            // 1. Upload file to project (temporary)
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('category', 'source');
+            const uploadResp = await fetch('/api/projects/' + pid + '/files', {
+                method: 'POST',
+                headers: { 'Authorization': API.initData() },
+                body: fd
+            });
+            const uploadData = await uploadResp.json();
+            if (!uploadResp.ok || uploadData.error) {
+                throw new Error(uploadData.error || 'Помилка завантаження');
+            }
+            const fileId = uploadData.id || uploadData.file_id;
+            if (!fileId) throw new Error('Не вдалося отримати ID файлу');
+
+            // 2. Extract text content
+            let textContent = '';
+            try {
+                const contentData = await API.getFileContent(pid, fileId);
+                textContent = contentData.content || '';
+            } catch (e) {
+                console.warn('Content extraction failed:', e);
+            }
+
+            // 3. Clean up — delete the temp file
+            try {
+                await API.deleteFile(pid, fileId);
+            } catch (e) {
+                console.warn('Failed to cleanup temp file:', e);
+            }
+
+            overlay.remove();
+
+            if (!textContent || textContent.trim().length < 10) {
+                App.toast('Не вдалося витягти текст з файлу. Спробуйте інший формат.', 'error');
+                return;
+            }
+
+            // 4. Show preview modal
+            this.showExtractedTextModal(file.name, textContent.trim());
+
+        } catch (err) {
+            overlay.remove();
+            App.toast(err.message || 'Помилка обробки файлу', 'error');
+        }
+    },
+
+    showExtractedTextModal(fileName, text) {
+        // Truncate very long texts for display, but keep full text for instruction
+        const displayText = text.length > 3000 ? text.substring(0, 3000) + '\n\n... (' + text.length + ' символів загалом)' : text;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal file-instruction-modal">
+                <div class="modal-header">
+                    <h3>\ud83d\udcc4 Текст з файлу</h3>
+                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">\u2715</button>
+                </div>
+                <div class="file-source-badge">
+                    \ud83d\udcc2 ${App.esc(fileName)} \u00b7 ${text.length.toLocaleString()} символів
+                </div>
+                <div class="form-group">
+                    <label>Назва інструкції</label>
+                    <input type="text" id="file-instr-title" class="form-input" value="Побажання з ${App.esc(fileName)}" required>
+                </div>
+                <div class="form-group">
+                    <label>Витягнутий текст <span style="color:var(--hint);font-weight:400">(можна редагувати)</span></label>
+                    <textarea id="file-instr-content" class="form-textarea" rows="12">${App.esc(text)}</textarea>
+                </div>
+                <p style="font-size:12px;color:var(--hint);line-height:1.5;margin-bottom:16px">
+                    Цей текст буде додано як інструкцію до промпту для створення глосарію.
+                    Відредагуйте за потреби перед додаванням.
+                </p>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Скасувати</button>
+                    <button type="button" class="btn btn-primary" onclick="InstructionsView.confirmFileInstruction()">
+                        Додати як інструкцію
+                    </button>
+                </div>
+            </div>`;
+
+        document.body.appendChild(overlay);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+        // Store the full text (not truncated) in a data attribute
+        overlay.querySelector('#file-instr-content')._fullText = text;
+    },
+
+    confirmFileInstruction() {
+        const title = document.getElementById('file-instr-title')?.value?.trim();
+        const contentEl = document.getElementById('file-instr-content');
+        const content = contentEl?.value?.trim();
+
+        if (!title || !content) {
+            App.toast('Заповніть назву та текст', 'warning');
+            return;
+        }
+
+        this.activeInstructions.push({
+            id: 'file_' + Date.now(),
+            title: title,
+            content: content,
+            icon: '\ud83d\udcc2',
+            category: 'file'
+        });
+
+        this.renderActive();
+        this.updatePromptPreview();
+        this.saveInstructions();
+
+        document.querySelector('.modal-overlay')?.remove();
+        App.toast('Інструкцію з файлу додано', 'success');
     }
 };
 
@@ -674,6 +826,70 @@ instructionsStyle.textContent = `
         }
     }
 
+    /* File instruction modal */
+    .file-instruction-modal {
+        max-width: 600px;
+        width: 95vw;
+    }
+    .file-instruction-modal .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+    .file-instruction-modal .modal-header h3 {
+        margin: 0;
+    }
+    .file-instruction-modal .modal-close {
+        background: none;
+        border: none;
+        font-size: 20px;
+        cursor: pointer;
+        color: var(--hint);
+        padding: 4px 8px;
+        border-radius: 6px;
+        min-width: 44px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .file-instruction-modal .modal-close:hover {
+        background: var(--bg-secondary);
+    }
+    .file-source-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px;
+        background: var(--bg-secondary);
+        border-radius: 8px;
+        font-size: 12px;
+        color: var(--hint);
+        font-weight: 500;
+        margin-bottom: 16px;
+    }
+    .file-instruction-modal .form-textarea {
+        font-size: 13px;
+        line-height: 1.6;
+        max-height: 300px;
+        overflow-y: auto;
+    }
+
+    /* Loading spinner */
+    .loading-spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid var(--border);
+        border-top-color: var(--btn);
+        border-radius: 50%;
+        margin: 0 auto;
+        animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
     @media (max-width: 767px) {
         .instructions-library,
         .instructions-workspace {
@@ -710,6 +926,15 @@ instructionsStyle.textContent = `
             font-size: 16px !important;
             min-height: 48px;
             padding: 14px;
+        }
+        .file-instruction-modal {
+            width: 100vw;
+            max-width: 100vw;
+            border-radius: 16px 16px 0 0;
+            margin-top: auto;
+        }
+        .file-instruction-modal .form-textarea {
+            max-height: 200px;
         }
     }
 `;

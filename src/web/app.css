@@ -147,20 +147,23 @@ body {
     box-shadow: 0 2px 8px rgba(36,129,204,.3);
 }
 
-/* Mobile nav: compact, scrollable */
+/* Mobile nav: compact, scrollable with snap */
 @media (max-width: 767px) {
     #nav {
-        gap: 6px;
+        gap: 4px;
         padding: 8px 0 12px;
         -webkit-overflow-scrolling: touch;
+        scroll-snap-type: x proximity;
     }
 
     .nav-btn {
-        padding: 8px 14px;
-        font-size: 13px;
+        padding: 8px 12px;
+        font-size: 12px;
         border-radius: 10px;
-        min-height: 40px;
+        min-height: 44px;
         gap: 4px;
+        scroll-snap-align: start;
+        flex-shrink: 0;
     }
 
     .nav-btn.active {
@@ -2192,10 +2195,31 @@ select:focus-visible {
 .docx-native-wrapper .docx-wrapper > section.docx-native:last-child { margin-bottom: 0; }
 
 @media (max-width: 767px) {
-    .pdf-native-pages { padding: 8px; gap: 6px; }
-    .docx-native-wrapper .docx-wrapper { padding: 4px !important; }
+    .pdf-native-pages { padding: 4px; gap: 4px; }
+    .pdf-page-wrapper {
+        max-width: 100% !important; width: 100% !important;
+        height: auto !important;
+    }
+    .pdf-page-canvas {
+        max-width: 100% !important; width: 100% !important; height: auto !important;
+    }
+    .pdf-text-layer { display: none; } /* text layer misaligns on scaled mobile — hide */
+    .docx-native-wrapper { overflow-x: hidden; }
+    .docx-native-wrapper .docx-wrapper {
+        padding: 2px !important; max-width: 100vw; overflow-x: hidden;
+    }
     .docx-native-wrapper .docx-wrapper > section.docx-native {
-        min-width: 0 !important; width: 100% !important; padding: 12px !important;
+        min-width: 0 !important; width: 100% !important;
+        max-width: calc(100vw - 36px) !important;
+        padding: 10px 8px !important;
+        overflow-x: auto; overflow-y: visible;
+        word-wrap: break-word; overflow-wrap: break-word;
+    }
+    /* Scale down tables and images inside docx that overflow */
+    .docx-native-wrapper table { max-width: 100% !important; table-layout: fixed; font-size: 11px; }
+    .docx-native-wrapper img { max-width: 100% !important; height: auto !important; }
+    .docx-native-wrapper p, .docx-native-wrapper span {
+        max-width: 100% !important; word-wrap: break-word; overflow-wrap: break-word;
     }
 }
 
@@ -3271,9 +3295,12 @@ mark.hl-native { padding: 0; margin: 0; line-height: inherit; }
     padding: 4px 12px; border-radius: 20px;
     letter-spacing: .3px;
 }
-.tier-card .tier-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
-.tier-card .tier-price { font-size: 28px; font-weight: 700; margin: 8px 0 20px; }
+.tier-card .tier-name { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
+.tier-card .tier-tagline { font-size: 13px; color: var(--hint); font-weight: 500; margin-bottom: 12px; }
+.tier-card .tier-price { font-size: 28px; font-weight: 700; margin: 0 0 12px; }
 .tier-card .tier-price .currency { font-size: 18px; font-weight: 500; vertical-align: super; }
+.tier-card .tier-price .tier-price-unit { font-size: 14px; font-weight: 400; color: var(--hint); }
+.tier-card .tier-desc { font-size: 13px; color: var(--hint); line-height: 1.55; margin: 0 0 16px; }
 .tier-card .tier-features { list-style: none; padding: 0; margin: 0 0 16px; }
 .tier-card .tier-features li {
     padding: 4px 0; font-size: 14px; color: var(--text);
@@ -3456,3 +3483,50 @@ mark.hl-native { padding: 0; margin: 0; line-height: inherit; }
 /* ── Price Animation ── */
 .price-animated { transition: opacity .15s, transform .15s; }
 .price-animated.changing { opacity: 0; transform: translateY(-4px); }
+
+/* ── Mobile Order Rows ── */
+@media (max-width: 767px) {
+    .order-file-row {
+        flex-wrap: wrap;
+        gap: 2px 8px;
+        padding: 10px 0;
+    }
+    .order-file-row .file-name {
+        width: 100%;
+        font-size: 13px;
+    }
+    .order-file-row .file-stats {
+        font-size: 12px;
+    }
+    .order-total {
+        font-size: 15px;
+    }
+    .btn-order {
+        height: 48px;
+        font-size: 15px;
+        border-radius: 12px;
+    }
+    /* File action buttons: bigger touch targets */
+    .file-actions {
+        gap: 4px;
+    }
+    .file-actions .btn-icon {
+        min-width: 44px;
+        min-height: 44px;
+        font-size: 16px;
+    }
+    /* Invoice cards mobile */
+    .invoice-card {
+        padding: 12px;
+    }
+    .invoice-card .invoice-amount {
+        font-size: 14px;
+    }
+    /* Tier mini cards (settings) */
+    .tier-selector-mini {
+        flex-direction: column !important;
+    }
+    .tier-mini-card {
+        padding: 16px;
+    }
+}

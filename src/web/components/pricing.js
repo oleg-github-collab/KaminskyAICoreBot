@@ -2,12 +2,14 @@ const TIERS = {
     optimum: {
         name: 'Оптимум',
         priceCents: 91,
+        tagline: 'Швидкий та точний',
+        description: 'Професійний переклад з використанням вашого затвердженого глосарію. Ідеально для текстових документів, де важливий зміст, а не оформлення.',
         features: [
-            'Якісний машинний переклад',
-            'Підтримка затвердженого глосарію',
-            'Налаштування формальності (Ви/ти)',
-            'Контекст для покращення якості',
-            'Швидкий результат',
+            'Переклад з урахуванням глосарію',
+            'Налаштування формальності (Sie/Ви, du/ти)',
+            'Контекст документу для точності',
+            'Швидкий результат \u2014 хвилини, не години',
+            'Перевірка спеціалістом перед видачею',
         ],
         formats: 'TXT, DOCX, PDF (текстові)',
         badge: null,
@@ -15,17 +17,17 @@ const TIERS = {
     ultra: {
         name: 'Ультра',
         priceCents: 135,
+        tagline: 'Максимальна якість',
+        description: 'Найвищий рівень перекладу з повним збереженням оригінального форматування. Для складних документів, презентацій та захищених файлів.',
         features: [
-            'Найвища якість перекладу',
-            'Підтримка затвердженого глосарію',
-            'Повне збереження форматування',
-            '30+ форматів файлів',
-            'Переклад зображень у PDF та DOCX',
-            'Складні PDF зі скануванням',
-            'Захищені PDF з паролем',
-            'Двомовний PDF (оригінал + переклад)',
-            'Переклад PPTX, EPUB, XLSX та інших',
+            'Переклад з урахуванням глосарію',
+            'Повне збереження макету та форматування',
+            '30+ форматів: PDF, DOCX, PPTX, XLSX, EPUB',
+            'Переклад тексту на зображеннях (PDF, DOCX)',
+            'Скановані та захищені паролем PDF',
+            'Двомовний PDF (оригінал + переклад поруч)',
             'Переклад назв файлів',
+            'Перевірка спеціалістом перед видачею',
         ],
         formats: 'PDF, DOCX, PPTX, XLSX, EPUB, HTML, TXT та 20+ інших',
         badge: 'Рекомендовано',
@@ -133,7 +135,12 @@ const PricingView = {
                     <button class="btn-order" onclick="PricingView.orderGlossary(${pid})">
                         Замовити глосарій \u2014 \u20ac${App.fmtEuro(totalCents)}
                     </button>
-                ` : '<p style="color:var(--hint);text-align:center;padding:12px;font-size:13px">Завантажте файли для розрахунку вартості</p>'}
+                ` : `<div style="text-align:center;padding:16px 12px">
+                    <p style="color:var(--hint);font-size:13px;margin-bottom:12px">Завантажте вихідні файли для розрахунку вартості глосарію</p>
+                    <button class="btn btn-secondary btn-sm" onclick="App.navigate('files')" style="gap:6px">
+                        \ud83d\udcc2 Перейти до файлів
+                    </button>
+                </div>`}
             </div>`;
     },
 
@@ -162,7 +169,9 @@ const PricingView = {
             <div class="tier-card${isSelected ? ' selected' : ''}" onclick="PricingView.selectTier('${tierId}')">
                 ${tier.badge ? '<div class="tier-badge">\u2605 ' + tier.badge + '</div>' : ''}
                 <div class="tier-name">${tier.name}</div>
-                <div class="tier-price"><span class="currency">\u20ac</span>${(tier.priceCents / 100).toFixed(2)} / сторінка</div>
+                <div class="tier-tagline">${tier.tagline}</div>
+                <div class="tier-price"><span class="currency">\u20ac</span>${(tier.priceCents / 100).toFixed(2)}<span class="tier-price-unit"> / стор.</span></div>
+                <p class="tier-desc">${App.esc(tier.description)}</p>
                 <ul class="tier-features">
                     ${tier.features.map(f => '<li>' + App.esc(f) + '</li>').join('')}
                 </ul>

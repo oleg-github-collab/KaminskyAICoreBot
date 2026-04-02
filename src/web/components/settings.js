@@ -64,18 +64,18 @@ const SettingsView = {
                         <span style="font-size:14px">Зберігати форматування документів</span>
                     </label>
                 </div>
-                <button class="btn btn-primary" style="margin-top:16px" onclick="SettingsView.save(${pid})">\ud83d\udcbe Зберегти налаштування</button>
-                <div class="settings-card" style="margin-top:24px">
+                <div class="settings-card" style="margin-top:16px">
                     <div class="settings-card-header">
                         <div class="settings-card-icon">\u2b50</div>
                         <span>Рівень перекладу</span>
                     </div>
-                    <div class="settings-card-desc">Обраний рівень буде запропоновано за замовчуванням при замовленні</div>
+                    <div class="settings-card-desc">Обраний рівень буде запропоновано за замовчуванням при замовленні. Детальне порівняння — у вкладці «Вартість».</div>
                     <div class="tier-selector-mini" style="display:flex;gap:10px;margin-top:12px">
                         <div class="tier-mini-card${(data.translation_tier || 'optimum') === 'optimum' ? ' selected' : ''}"
                              onclick="SettingsView.selectTier(${pid}, 'optimum')">
                             <div class="tier-name" style="font-size:14px;font-weight:600">Оптимум</div>
                             <div style="font-size:13px;color:var(--hint)">\u20ac0.91 / стор.</div>
+                            <div style="font-size:11px;color:var(--hint);margin-top:6px;line-height:1.4">Текстові документи з глосарієм</div>
                             <div class="tier-radio" style="margin-top:8px"><div class="tier-radio-dot"></div></div>
                         </div>
                         <div class="tier-mini-card${(data.translation_tier || 'optimum') === 'ultra' ? ' selected' : ''}"
@@ -83,10 +83,12 @@ const SettingsView = {
                             <div class="tier-badge" style="position:static;margin-bottom:4px;display:inline-block">\u2605 Рекомендовано</div>
                             <div class="tier-name" style="font-size:14px;font-weight:600">Ультра</div>
                             <div style="font-size:13px;color:var(--hint)">\u20ac1.35 / стор.</div>
+                            <div style="font-size:11px;color:var(--hint);margin-top:6px;line-height:1.4">30+ форматів, збереження макету</div>
                             <div class="tier-radio" style="margin-top:8px"><div class="tier-radio-dot"></div></div>
                         </div>
                     </div>
-                </div>`;
+                </div>
+                <button class="btn btn-primary" style="margin-top:20px;width:100%" onclick="SettingsView.save(${pid})">\ud83d\udcbe Зберегти налаштування</button>`;
         } catch (e) {
             form.innerHTML = `<p style="color:var(--hint);padding:12px">Помилка: ${App.esc(e.message)}</p>`;
         }

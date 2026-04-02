@@ -90,16 +90,24 @@ const FilesView = {
             }
 
             if (!files.length) {
-                list.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-icon">\ud83d\udcc4</div><p>Немає файлів</p><p style="font-size:13px;color:var(--hint);margin-top:4px">Завантажте файли вище або надішліть їх через бот</p></div>';
+                const isFiltered = this.category !== 'all';
+                list.innerHTML = `<div class="empty-state" style="padding:32px">
+                    <div class="empty-state-icon">\ud83d\udcc2</div>
+                    <p class="empty-state-title">${isFiltered ? 'Немає файлів у цій категорії' : 'Немає файлів'}</p>
+                    <p class="empty-state-text">${isFiltered ? 'Спробуйте іншу категорію або завантажте нові файли' : 'Завантажте вихідні тексти, щоб розпочати роботу. Або надішліть файли через бот.'}</p>
+                </div>`;
                 return;
             }
-            list.innerHTML = files.map(f => `
+            list.innerHTML = files.map(f => {
+                const safeName = App.esc(f.original_name).replace(/'/g, "\\'");
+                const catLabel = this.categoryLabel(f.category);
+                return `
                 <div class="file-item">
                     <div class="file-icon">${this.icon(f.category)}</div>
                     <div class="file-info">
                         <div class="file-name">${App.esc(f.original_name)}</div>
                         <div class="file-meta">
-                            ${App.esc(f.category)} \u00b7 ${App.fmtSize(f.file_size)}
+                            ${catLabel} \u00b7 ${App.fmtSize(f.file_size)}
                             ${f.char_count ? ' \u00b7 ' + f.char_count.toLocaleString() + ' сим.' : ''}
                             ${f.page_count ? ' \u00b7 ' + f.page_count + ' стор.' : ''}
                             ${f.estimated_price_cents ? ' \u00b7 \u20ac' + App.fmtEuro(f.estimated_price_cents) : ''}
@@ -108,30 +116,30 @@ const FilesView = {
                     </div>
                     <div class="file-actions">
                         <button class="btn btn-icon btn-secondary"
-                                onclick="FileViewer.show(${pid}, ${f.id}, '${App.esc(f.original_name).replace(/'/g, "\\'")}')"
+                                onclick="FileViewer.show(${pid}, ${f.id}, '${safeName}')"
                                 data-tooltip="Переглянути">
                             \ud83d\udc41\ufe0f
                         </button>
                         ${f.category === 'translated' ? `
                         <button class="btn btn-icon btn-secondary"
-                                onclick="FileViewer.showPair(${pid}, ${f.id}, '${App.esc(f.original_name).replace(/'/g, "\\'")}')"
+                                onclick="FileViewer.showPair(${pid}, ${f.id}, '${safeName}')"
                                 data-tooltip="Порівняти з оригіналом">
                             \u2194
                         </button>` : ''}
                         <button class="btn btn-icon btn-secondary"
-                                onclick="FilesView.downloadFile(${pid},${f.id},'${App.esc(f.original_name).replace(/'/g, "\\'")}')"
+                                onclick="FilesView.downloadFile(${pid},${f.id},'${safeName}')"
                                 data-tooltip="Скачати">
                             \u2b07
                         </button>
                         <button class="btn btn-icon"
                                 style="color:var(--red);background:var(--red-bg)"
-                                onclick="FilesView.deleteFile(${pid},${f.id},'${App.esc(f.original_name).replace(/'/g, "\\'")}')"
+                                onclick="FilesView.deleteFile(${pid},${f.id},'${safeName}')"
                                 data-tooltip="Видалити">
                             \u2715
                         </button>
                     </div>
-                </div>
-            `).join('');
+                </div>`;
+            }).join('');
         } catch (e) {
             list.innerHTML = `<p style="color:var(--hint);padding:12px">Помилка: ${App.esc(e.message)}</p>`;
         }
@@ -204,5 +212,9 @@ const FilesView = {
 
     icon(cat) {
         return { source: '\ud83d\udcc4', reference: '\ud83d\udcd1', glossary: '\ud83d\udccb', translated: '\u2705' }[cat] || '\ud83d\udcc4';
+    },
+
+    categoryLabel(cat) {
+        return { source: 'Вихідний', reference: 'Референс', glossary: 'Глосарій', translated: 'Переклад' }[cat] || cat;
     }
 };
