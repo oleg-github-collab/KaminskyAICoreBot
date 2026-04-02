@@ -104,6 +104,7 @@ const FilesView = {
                             ${f.page_count ? ' \u00b7 ' + f.page_count + ' стор.' : ''}
                             ${f.estimated_price_cents ? ' \u00b7 \u20ac' + App.fmtEuro(f.estimated_price_cents) : ''}
                         </div>
+                        ${f.review_status && f.review_status !== 'pending' ? `<div style="margin-top:4px"><span class="review-badge ${this.reviewClass(f.review_status)}">${this.reviewLabel(f.review_status)}</span></div>` : ''}
                     </div>
                     <div class="file-actions">
                         <button class="btn btn-icon btn-secondary"
@@ -117,6 +118,11 @@ const FilesView = {
                                 data-tooltip="Порівняти з оригіналом">
                             \u2194
                         </button>` : ''}
+                        <button class="btn btn-icon btn-secondary"
+                                onclick="FilesView.downloadFile(${pid},${f.id},'${App.esc(f.original_name).replace(/'/g, "\\'")}')"
+                                data-tooltip="Скачати">
+                            \u2b07
+                        </button>
                         <button class="btn btn-icon"
                                 style="color:var(--red);background:var(--red-bg)"
                                 onclick="FilesView.deleteFile(${pid},${f.id},'${App.esc(f.original_name).replace(/'/g, "\\'")}')"
@@ -157,6 +163,43 @@ const FilesView = {
                 this.loadFiles(pid);
             } catch (e) { App.alert(e.message); }
         });
+    },
+
+    async downloadFile(pid, fid, name) {
+        try {
+            const blob = await API.downloadFileBlob(pid, fid);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = name; a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            App.toast('Помилка завантаження: ' + e.message, 'error');
+        }
+    },
+
+    reviewClass(status) {
+        const map = {
+            'admin_review': 'review',
+            'admin_approved': 'approved',
+            'admin_edited': 'edited',
+            'client_review': 'review',
+            'client_approved': 'approved',
+            'revision_requested': 'revision',
+        };
+        return map[status] || 'pending';
+    },
+
+    reviewLabel(status) {
+        const map = {
+            'pending': '\u23f3 Очікує',
+            'admin_review': '\ud83d\udd0d На перевірці',
+            'admin_approved': '\u2705 Схвалено',
+            'admin_edited': '\u270f Відредаговано',
+            'client_review': '\ud83d\udce9 Очікує перевірки',
+            'client_approved': '\u2705 Затверджено',
+            'revision_requested': '\ud83d\udd04 Потребує правок',
+        };
+        return map[status] || status;
     },
 
     icon(cat) {

@@ -519,17 +519,19 @@ pub fn createStripeSession(
     project_id: i64,
     user_telegram_id: i64,
 ) !StripeSession {
-    return createStripeCheckoutSession(allocator, secret_key, amount_cents, project_name, mini_app_url, project_id, user_telegram_id);
+    return createStripeCheckoutSession(allocator, secret_key, amount_cents, project_name, mini_app_url, project_id, user_telegram_id, "glossary", null);
 }
 
 fn createStripeCheckoutSession(
     allocator: std.mem.Allocator,
     secret_key: []const u8,
     amount_cents: i64,
-    project_name: []const u8,
+    product_name: []const u8,
     mini_app_url: []const u8,
     project_id: i64,
     user_telegram_id: i64,
+    invoice_type: []const u8,
+    tier: ?[]const u8,
 ) !StripeSession {
     // Build form-urlencoded body
     var body = std.ArrayList(u8).init(allocator);
@@ -545,18 +547,20 @@ fn createStripeCheckoutSession(
     const user_id_str = std.fmt.bufPrint(&uid_buf, "{d}", .{user_telegram_id}) catch "0";
     var amt_buf: [20]u8 = undefined;
     const amount_str = std.fmt.bufPrint(&amt_buf, "{d}", .{amount_cents}) catch "0";
-    var name_buf: [256]u8 = undefined;
-    const item_name = std.fmt.bufPrint(&name_buf, "KI Beratung \u{2014} {s}", .{project_name}) catch "KI Beratung";
 
     try appendFormField(&body, "mode", "payment");
     try appendFormField(&body, "line_items[0][price_data][currency]", "eur");
     try appendFormField(&body, "line_items[0][price_data][unit_amount]", amount_str);
-    try appendFormField(&body, "line_items[0][price_data][product_data][name]", item_name);
+    try appendFormField(&body, "line_items[0][price_data][product_data][name]", product_name);
     try appendFormField(&body, "line_items[0][quantity]", "1");
     try appendFormField(&body, "success_url", success_url);
     try appendFormField(&body, "cancel_url", cancel_url);
     try appendFormField(&body, "metadata[project_id]", project_id_str);
     try appendFormField(&body, "metadata[user_telegram_id]", user_id_str);
+    try appendFormField(&body, "metadata[invoice_type]", invoice_type);
+    if (tier) |t| {
+        try appendFormField(&body, "metadata[tier]", t);
+    }
     try appendFormField(&body, "client_reference_id", project_id_str);
 
     const form_data = try allocator.dupe(u8, body.items);
@@ -646,7 +650,7 @@ pub fn handleProjects(req: *httpz.Request, res: *httpz.Response) !void {
 
     var stmt = try a.db.prepare(
         \\SELECT p.id, p.owner_id, p.name, p.description, p.source_lang, p.target_lang,
-        \\       p.invite_code, p.is_active, pm.role
+        \\       p.invite_code, p.is_active, pm.role, p.workflow_stage
         \\FROM projects p
         \\JOIN project_members pm ON pm.project_id = p.id
         \\WHERE pm.user_id = ? AND p.is_active = 1
@@ -666,11 +670,13 @@ pub fn handleProjects(req: *httpz.Request, res: *httpz.Response) !void {
         invite_link: []const u8,
         is_active: bool,
         role: []const u8,
+        workflow_stage: []const u8,
     };
 
     var items = std.ArrayList(Item).init(res.arena);
     while (try stmt.step()) {
         const invite_code = stmt.columnText(6) orelse "";
+        const ws = try dupOrEmpty(res.arena, stmt.columnText(9));
         try items.append(.{
             .id = stmt.columnInt(0),
             .owner_id = stmt.columnInt(1),
@@ -682,6 +688,7 @@ pub fn handleProjects(req: *httpz.Request, res: *httpz.Response) !void {
             .invite_link = try inviteLink(res.arena, a.config.bot_username, invite_code),
             .is_active = stmt.columnInt(7) == 1,
             .role = try dupOrEmpty(res.arena, stmt.columnText(8)),
+            .workflow_stage = if (ws.len > 0) ws else "files_uploaded",
         });
     }
 
@@ -728,6 +735,7 @@ pub fn handleCreateProject(req: *httpz.Request, res: *httpz.Response) !void {
             .invite_code = project.invite_code,
             .invite_link = try inviteLink(res.arena, a.config.bot_username, project.invite_code),
             .is_active = project.is_active,
+            .workflow_stage = project.workflow_stage,
         },
     }, .{});
 }
@@ -748,6 +756,7 @@ pub fn handleGetProject(req: *httpz.Request, res: *httpz.Response) !void {
             .invite_code = access.project.invite_code,
             .invite_link = try inviteLink(res.arena, a.config.bot_username, access.project.invite_code),
             .is_active = access.project.is_active,
+            .workflow_stage = access.project.workflow_stage,
         },
     }, .{});
 }
@@ -762,7 +771,7 @@ pub fn handleListFiles(req: *httpz.Request, res: *httpz.Response) !void {
     var stmt = if (category != null and category.?.len > 0)
         try a.db.prepare(
             \\SELECT id, original_name, file_size, category, file_name, mime_type,
-            \\       estimated_price_cents, char_count, page_count, created_at
+            \\       estimated_price_cents, char_count, page_count, created_at, review_status
             \\FROM files
             \\WHERE project_id = ? AND category = ?
             \\ORDER BY created_at DESC
@@ -770,7 +779,7 @@ pub fn handleListFiles(req: *httpz.Request, res: *httpz.Response) !void {
     else
         try a.db.prepare(
             \\SELECT id, original_name, file_size, category, file_name, mime_type,
-            \\       estimated_price_cents, char_count, page_count, created_at
+            \\       estimated_price_cents, char_count, page_count, created_at, review_status
             \\FROM files
             \\WHERE project_id = ?
             \\ORDER BY created_at DESC
@@ -792,6 +801,7 @@ pub fn handleListFiles(req: *httpz.Request, res: *httpz.Response) !void {
         char_count: i64,
         page_count: i64,
         created_at: i64,
+        review_status: []const u8,
     };
 
     var items = std.ArrayList(Item).init(res.arena);
@@ -807,6 +817,7 @@ pub fn handleListFiles(req: *httpz.Request, res: *httpz.Response) !void {
             .char_count = stmt.columnInt(7),
             .page_count = stmt.columnInt(8),
             .created_at = stmt.columnInt(9),
+            .review_status = try dupOrEmpty(res.arena, stmt.columnText(10)),
         });
     }
 
@@ -1674,6 +1685,69 @@ pub fn handleSyncDeepL(req: *httpz.Request, res: *httpz.Response) !void {
     }, .{});
 }
 
+// ─── Glossary Import ─────────────────────────────────────────────────────────
+
+pub fn handleImportGlossary(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    const body = req.body() orelse {
+        jsonError(res, 400, "Пустий запит.");
+        return;
+    };
+
+    const parsed = std.json.parseFromSlice(struct {
+        terms: ?[]const struct {
+            source_term: []const u8,
+            target_term: []const u8,
+            domain: ?[]const u8 = null,
+        } = null,
+    }, res.arena, body, .{ .ignore_unknown_fields = true }) catch {
+        jsonError(res, 400, "Невірний формат JSON.");
+        return;
+    };
+    defer parsed.deinit();
+
+    const terms = parsed.value.terms orelse {
+        jsonError(res, 400, "Масив terms порожній.");
+        return;
+    };
+
+    if (terms.len == 0) {
+        jsonError(res, 400, "Масив terms порожній.");
+        return;
+    }
+
+    if (terms.len > 5000) {
+        jsonError(res, 400, "Максимум 5000 термінів за один імпорт.");
+        return;
+    }
+
+    const now = std.time.timestamp();
+    var imported: i64 = 0;
+
+    for (terms) |term| {
+        if (term.source_term.len == 0 or term.target_term.len == 0) continue;
+
+        var stmt = try a.db.prepare(
+            \\INSERT OR IGNORE INTO glossary_terms
+            \\  (project_id, source_term, target_term, domain, confidence, is_approved, created_at)
+            \\VALUES (?, ?, ?, ?, 0.5, 0, ?)
+        );
+        defer stmt.deinit();
+        try stmt.bindInt(1, access.project_id);
+        try stmt.bindText(2, term.source_term);
+        try stmt.bindText(3, term.target_term);
+        try stmt.bindText(4, term.domain orelse "");
+        try stmt.bindInt(5, now);
+        try stmt.exec();
+        imported += 1;
+    }
+
+    try res.json(.{ .imported = imported }, .{});
+}
+
 pub fn handleMessages(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const access = parseProjectAccess(req, res, user) orelse return;
@@ -1716,6 +1790,7 @@ pub fn handlePricing(req: *httpz.Request, res: *httpz.Response) !void {
     const access = parseProjectAccess(req, res, user) orelse return;
     const a = app();
 
+    // Get aggregate stats
     var stmt = try a.db.prepare(
         \\SELECT COUNT(*), COALESCE(SUM(char_count), 0), COALESCE(SUM(page_count), 0),
         \\       COALESCE(SUM(estimated_price_cents), 0)
@@ -1736,6 +1811,53 @@ pub fn handlePricing(req: *httpz.Request, res: *httpz.Response) !void {
         total_price_cents = stmt.columnInt(3);
     }
 
+    // Get per-file details
+    var file_stmt = try a.db.prepare(
+        \\SELECT id, file_name, char_count, page_count, estimated_price_cents
+        \\FROM files
+        \\WHERE project_id = ? AND category = 'source'
+        \\ORDER BY created_at ASC
+    );
+    defer file_stmt.deinit();
+    try file_stmt.bindInt(1, access.project_id);
+
+    const FileInfo = struct {
+        id: i64,
+        name: []const u8,
+        chars: i64,
+        pages: i64,
+        price_cents: i64,
+    };
+    var files_list = std.ArrayList(FileInfo).init(res.arena);
+    while (try file_stmt.step()) {
+        try files_list.append(.{
+            .id = file_stmt.columnInt(0),
+            .name = try dupOrEmpty(res.arena, file_stmt.columnText(1)),
+            .chars = file_stmt.columnInt(2),
+            .pages = file_stmt.columnInt(3),
+            .price_cents = file_stmt.columnInt(4),
+        });
+    }
+
+    // Calculate translation tier pricing
+    var optimum_total: i64 = 0;
+    var ultra_total: i64 = 0;
+    for (files_list.items) |f| {
+        const chars: u64 = @intCast(if (f.chars > 0) f.chars else if (f.pages > 0) f.pages * 1800 else 0);
+        optimum_total += pricing.priceTranslationOptimum(chars);
+        ultra_total += pricing.priceTranslationUltra(chars);
+    }
+
+    // Get workflow stage
+    var stage_str: []const u8 = "files_uploaded";
+    var ws = try a.db.prepare("SELECT workflow_stage FROM projects WHERE id = ?");
+    defer ws.deinit();
+    try ws.bindInt(1, access.project_id);
+    if (try ws.step()) {
+        stage_str = try dupOrEmpty(res.arena, ws.columnText(0));
+        if (stage_str.len == 0) stage_str = "files_uploaded";
+    }
+
     try res.json(.{
         .pricing = .{
             .total_files = total_files,
@@ -1743,7 +1865,13 @@ pub fn handlePricing(req: *httpz.Request, res: *httpz.Response) !void {
             .total_pages = total_pages,
             .total_price_cents = total_price_cents,
             .currency = "EUR",
+            .translation = .{
+                .optimum = .{ .total_cents = optimum_total, .per_page_cents = @as(i64, 91) },
+                .ultra = .{ .total_cents = ultra_total, .per_page_cents = @as(i64, 135) },
+            },
         },
+        .files = try files_list.toOwnedSlice(),
+        .workflow_stage = stage_str,
     }, .{});
 }
 
@@ -1752,13 +1880,57 @@ pub fn handleCreateInvoice(req: *httpz.Request, res: *httpz.Response) !void {
     const access = parseProjectAccess(req, res, user) orelse return;
     const a = app();
 
-    const amount_cents = try db_files.totalPriceForProject(&a.db, access.project_id);
-    if (amount_cents <= 0) {
-        jsonError(res, 400, "Для цього проєкту ще немає файлів для виставлення рахунку.");
-        return;
+    // Parse optional body with invoice type and tier
+    const Body = struct {
+        type: ?[]const u8 = null,
+        tier: ?[]const u8 = null,
+    };
+    const payload = (try req.json(Body)) orelse Body{};
+    const invoice_type = payload.type orelse "glossary";
+    const tier = payload.tier;
+
+    var amount_cents: i64 = 0;
+    var description: []const u8 = "";
+
+    if (std.mem.eql(u8, invoice_type, "translation")) {
+        // Translation invoice — calculate based on tier
+        const tier_str = tier orelse "optimum";
+
+        // Get file char/page counts
+        var file_stmt = try a.db.prepare(
+            "SELECT char_count, page_count FROM files WHERE project_id = ? AND category = 'source'",
+        );
+        defer file_stmt.deinit();
+        try file_stmt.bindInt(1, access.project_id);
+
+        while (try file_stmt.step()) {
+            const chars = file_stmt.columnInt(0);
+            const pages = file_stmt.columnInt(1);
+            const effective_chars: u64 = @intCast(if (chars > 0) chars else if (pages > 0) pages * 1800 else 0);
+            if (std.mem.eql(u8, tier_str, "ultra")) {
+                amount_cents += pricing.priceTranslationUltra(effective_chars);
+            } else {
+                amount_cents += pricing.priceTranslationOptimum(effective_chars);
+            }
+        }
+
+        if (amount_cents <= 0) {
+            jsonError(res, 400, "Немає файлів для перекладу.");
+            return;
+        }
+
+        const tier_label: []const u8 = if (std.mem.eql(u8, tier_str, "ultra")) "Ультра" else "Оптимум";
+        description = try std.fmt.allocPrint(res.arena, "KI Beratung \u{2014} Переклад ({s}) \u{2014} {s}", .{ tier_label, access.project.name });
+    } else {
+        // Glossary invoice — use existing estimated_price_cents
+        amount_cents = try db_files.totalPriceForProject(&a.db, access.project_id);
+        if (amount_cents <= 0) {
+            jsonError(res, 400, "Для цього проєкту ще немає файлів для виставлення рахунку.");
+            return;
+        }
+        description = try std.fmt.allocPrint(res.arena, "KI Beratung \u{2014} Глосарій \u{2014} {s}", .{access.project.name});
     }
 
-    const description = try std.fmt.allocPrint(res.arena, "KI Beratung — {s}", .{access.project.name});
     var stripe_session_id: ?[]const u8 = null;
     var payment_url: ?[]const u8 = null;
 
@@ -1767,13 +1939,15 @@ pub fn handleCreateInvoice(req: *httpz.Request, res: *httpz.Response) !void {
             res.arena,
             a.config.stripe_secret_key,
             amount_cents,
-            access.project.name,
+            description,
             a.config.mini_app_url,
             access.project_id,
             user.telegram_id,
+            invoice_type,
+            tier,
         ) catch |err| {
             std.log.err("Stripe checkout session failed: {}", .{err});
-            jsonError(res, 502, "Не вдалося створити Stripe Checkout Session.");
+            jsonError(res, 502, "Не вдалося створити платіжну сесію.");
             return;
         };
         stripe_session_id = session.id;
@@ -1782,8 +1956,9 @@ pub fn handleCreateInvoice(req: *httpz.Request, res: *httpz.Response) !void {
 
     var stmt = try a.db.prepare(
         \\INSERT INTO invoices
-        \\  (project_id, user_id, amount_cents, currency, description, stripe_session_id, stripe_payment_url, status, created_at)
-        \\VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, ?)
+        \\  (project_id, user_id, amount_cents, currency, description, stripe_session_id,
+        \\   stripe_payment_url, status, invoice_type, translation_tier, created_at)
+        \\VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, ?, ?, ?)
     );
     defer stmt.deinit();
     try stmt.bindInt(1, access.project_id);
@@ -1793,14 +1968,16 @@ pub fn handleCreateInvoice(req: *httpz.Request, res: *httpz.Response) !void {
     try stmt.bindText(5, stripe_session_id);
     try stmt.bindText(6, payment_url);
     try stmt.bindText(7, if (payment_url != null) "pending" else "manual_review");
-    try stmt.bindInt(8, std.time.timestamp());
+    try stmt.bindText(8, invoice_type);
+    try stmt.bindText(9, tier);
+    try stmt.bindInt(10, std.time.timestamp());
     try stmt.exec();
 
     const invoice_id = a.db.lastInsertRowId();
 
     if (payment_url) |url| {
         const msg = try std.fmt.allocPrint(res.arena,
-            "Рахунок для проєкту <b>{s}</b> створено.\n\nСума: €{d}.{d:0>2}\nОплата: {s}",
+            "Рахунок для проєкту <b>{s}</b> створено.\n\nСума: \u{20ac}{d}.{d:0>2}\nОплата: {s}",
             .{
                 access.project.name,
                 @divTrunc(amount_cents, 100),
@@ -1814,8 +1991,8 @@ pub fn handleCreateInvoice(req: *httpz.Request, res: *httpz.Response) !void {
         }
     } else {
         const admin_note = try std.fmt.allocPrint(res.arena,
-            "Створено manual invoice для проєкту <b>{s}</b>, user_id={d}, amount={d} cents",
-            .{ access.project.name, user.telegram_id, amount_cents },
+            "Створено manual invoice для проєкту <b>{s}</b>, user_id={d}, amount={d} cents, type={s}",
+            .{ access.project.name, user.telegram_id, amount_cents, invoice_type },
         );
         const tg_resp = a.tg.sendMessage(a.config.admin_chat_id, admin_note, null) catch null;
         if (tg_resp) |resp_body| {
@@ -1838,7 +2015,8 @@ pub fn handleListInvoices(req: *httpz.Request, res: *httpz.Response) !void {
     const a = app();
 
     var stmt = try a.db.prepare(
-        \\SELECT id, amount_cents, currency, description, status, stripe_payment_url, created_at, paid_at
+        \\SELECT id, amount_cents, currency, description, status, stripe_payment_url,
+        \\       created_at, paid_at, invoice_type, translation_tier
         \\FROM invoices
         \\WHERE project_id = ?
         \\ORDER BY created_at DESC
@@ -1856,6 +2034,8 @@ pub fn handleListInvoices(req: *httpz.Request, res: *httpz.Response) !void {
         payment_url: []const u8,
         created_at: i64,
         paid_at: i64,
+        invoice_type: []const u8,
+        translation_tier: []const u8,
     };
 
     var items = std.ArrayList(Item).init(res.arena);
@@ -1869,6 +2049,8 @@ pub fn handleListInvoices(req: *httpz.Request, res: *httpz.Response) !void {
             .payment_url = try dupOrEmpty(res.arena, stmt.columnText(5)),
             .created_at = stmt.columnInt(6),
             .paid_at = stmt.columnInt(7),
+            .invoice_type = try dupOrEmpty(res.arena, stmt.columnText(8)),
+            .translation_tier = try dupOrEmpty(res.arena, stmt.columnText(9)),
         });
     }
 
@@ -2155,18 +2337,20 @@ pub fn handleGetSettings(req: *httpz.Request, res: *httpz.Response) !void {
     const a = app();
 
     var stmt = try a.db.prepare(
-        "SELECT formality, split_sentences, preserve_formatting, context, tag_handling FROM translation_settings WHERE project_id = ?",
+        "SELECT formality, split_sentences, preserve_formatting, context, tag_handling, translation_tier FROM translation_settings WHERE project_id = ?",
     );
     defer stmt.deinit();
     try stmt.bindInt(1, access.project_id);
 
     if (try stmt.step()) {
+        const tier_val = try dupOrEmpty(res.arena, stmt.columnText(5));
         try res.json(.{
             .formality = try dupOrEmpty(res.arena, stmt.columnText(0)),
             .split_sentences = try dupOrEmpty(res.arena, stmt.columnText(1)),
             .preserve_formatting = stmt.columnInt(2) == 1,
             .context = try dupOrEmpty(res.arena, stmt.columnText(3)),
             .tag_handling = try dupOrEmpty(res.arena, stmt.columnText(4)),
+            .translation_tier = if (tier_val.len > 0) tier_val else "optimum",
         }, .{});
     } else {
         try res.json(.{
@@ -2175,6 +2359,7 @@ pub fn handleGetSettings(req: *httpz.Request, res: *httpz.Response) !void {
             .preserve_formatting = true,
             .context = "",
             .tag_handling = "",
+            .translation_tier = "optimum",
         }, .{});
     }
 }
@@ -2195,6 +2380,7 @@ pub fn handleUpdateSettings(req: *httpz.Request, res: *httpz.Response) !void {
         preserve_formatting: ?bool = null,
         context: ?[]const u8 = null,
         tag_handling: ?[]const u8 = null,
+        translation_tier: ?[]const u8 = null,
     }, res.arena, body, .{ .ignore_unknown_fields = true }) catch {
         jsonError(res, 400, "Невірний формат JSON.");
         return;
@@ -2202,8 +2388,23 @@ pub fn handleUpdateSettings(req: *httpz.Request, res: *httpz.Response) !void {
     defer parsed.deinit();
 
     const now = std.time.timestamp();
+
+    // If only translation_tier is being updated, handle it separately
+    if (parsed.value.translation_tier != null and parsed.value.formality == null) {
+        var tier_stmt = try a.db.prepare(
+            "INSERT INTO translation_settings (project_id, translation_tier, updated_at) VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET translation_tier=excluded.translation_tier, updated_at=excluded.updated_at",
+        );
+        defer tier_stmt.deinit();
+        try tier_stmt.bindInt(1, access.project_id);
+        try tier_stmt.bindText(2, parsed.value.translation_tier orelse "optimum");
+        try tier_stmt.bindInt(3, now);
+        try tier_stmt.exec();
+        try res.json(.{ .ok = true }, .{});
+        return;
+    }
+
     var stmt = try a.db.prepare(
-        "INSERT INTO translation_settings (project_id, formality, split_sentences, preserve_formatting, context, tag_handling, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET formality=excluded.formality, split_sentences=excluded.split_sentences, preserve_formatting=excluded.preserve_formatting, context=excluded.context, tag_handling=excluded.tag_handling, updated_at=excluded.updated_at",
+        "INSERT INTO translation_settings (project_id, formality, split_sentences, preserve_formatting, context, tag_handling, translation_tier, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET formality=excluded.formality, split_sentences=excluded.split_sentences, preserve_formatting=excluded.preserve_formatting, context=excluded.context, tag_handling=excluded.tag_handling, translation_tier=excluded.translation_tier, updated_at=excluded.updated_at",
     );
     defer stmt.deinit();
     try stmt.bindInt(1, access.project_id);
@@ -2212,7 +2413,8 @@ pub fn handleUpdateSettings(req: *httpz.Request, res: *httpz.Response) !void {
     try stmt.bindInt(4, if (parsed.value.preserve_formatting orelse true) 1 else 0);
     try stmt.bindText(5, parsed.value.context orelse "");
     try stmt.bindText(6, parsed.value.tag_handling orelse "");
-    try stmt.bindInt(7, now);
+    try stmt.bindText(7, parsed.value.translation_tier orelse "optimum");
+    try stmt.bindInt(8, now);
     try stmt.exec();
 
     try res.json(.{ .ok = true }, .{});
@@ -2303,6 +2505,17 @@ pub fn handleWorkflowStatus(req: *httpz.Request, res: *httpz.Response) !void {
     const access = parseProjectAccess(req, res, user) orelse return;
     const a = app();
 
+    // Get workflow_stage from projects table
+    var stage_str: []const u8 = "files_uploaded";
+    var ws = try a.db.prepare("SELECT workflow_stage FROM projects WHERE id = ?");
+    defer ws.deinit();
+    try ws.bindInt(1, access.project_id);
+    if (try ws.step()) {
+        stage_str = try dupOrEmpty(res.arena, ws.columnText(0));
+        if (stage_str.len == 0) stage_str = "files_uploaded";
+    }
+
+    // Also get legacy workflow_steps if they exist
     var stmt = try a.db.prepare(
         "SELECT step_number, step_type, status, created_at, completed_at FROM workflow_steps WHERE project_id = ? ORDER BY step_number ASC",
     );
@@ -2328,7 +2541,61 @@ pub fn handleWorkflowStatus(req: *httpz.Request, res: *httpz.Response) !void {
         });
     }
 
-    try res.json(.{ .steps = try steps.toOwnedSlice() }, .{});
+    try res.json(.{
+        .workflow_stage = stage_str,
+        .steps = try steps.toOwnedSlice(),
+    }, .{});
+}
+
+// ─── Workflow Advance (Admin) ────────────────────────────────────────────────
+
+pub fn handleAdvanceWorkflow(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    const a = app();
+
+    // Only admin can advance workflow
+    if (user.telegram_id != a.config.admin_chat_id) {
+        jsonError(res, 403, "Тільки адміністратор може змінювати етап.");
+        return;
+    }
+
+    const Body = struct { stage: ?[]const u8 = null };
+    const payload = (try req.json(Body)) orelse {
+        jsonError(res, 400, "Невірний формат даних.");
+        return;
+    };
+    const new_stage = payload.stage orelse {
+        jsonError(res, 400, "Вкажіть stage.");
+        return;
+    };
+
+    // Validate stage
+    const valid_stages = [_][]const u8{
+        "files_uploaded",     "glossary_paid",          "glossary_review",
+        "glossary_approved",  "translation_paid",       "translation_processing",
+        "translation_review", "completed",
+    };
+    var is_valid = false;
+    for (valid_stages) |s| {
+        if (std.mem.eql(u8, new_stage, s)) {
+            is_valid = true;
+            break;
+        }
+    }
+    if (!is_valid) {
+        jsonError(res, 400, "Невірний етап.");
+        return;
+    }
+
+    var stmt = try a.db.prepare("UPDATE projects SET workflow_stage = ?, updated_at = ? WHERE id = ?");
+    defer stmt.deinit();
+    try stmt.bindText(1, new_stage);
+    try stmt.bindInt(2, std.time.timestamp());
+    try stmt.bindInt(3, access.project_id);
+    try stmt.exec();
+
+    try res.json(.{ .workflow_stage = new_stage }, .{});
 }
 
 // ─── Auth Session (for desktop browser) ─────────────────────────────────────

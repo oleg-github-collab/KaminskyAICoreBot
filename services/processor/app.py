@@ -17,6 +17,7 @@ import counter
 import deepl_service
 import ai_service
 import document_engine
+import otranslator_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -306,6 +307,88 @@ async def voice_estimate(request: Request, authorization: str = Header(default="
         text=body["text"],
         language=body.get("language", "uk"),
     )
+
+
+# ─── Ultra Translation (o.translator) ────────────────────────────────────────
+
+@app.post("/ultra/translate-text")
+async def ultra_translate_text(request: Request, authorization: str = Header(default="")):
+    verify_auth(authorization)
+    body = await request.json()
+
+    try:
+        result = otranslator_service.translate_text(
+            texts=body["texts"],
+            source_lang=body.get("source_lang", ""),
+            target_lang=body["target_lang"],
+            model=body.get("model", ""),
+            description=body.get("description", ""),
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Ultra text translation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Translation failed: {str(e)}")
+
+
+@app.post("/ultra/translate-document")
+async def ultra_translate_document(
+    file: UploadFile = File(...),
+    source_lang: str = Form(""),
+    target_lang: str = Form("UK"),
+    glossary_name: str = Form(""),
+    description: str = Form(""),
+    authorization: str = Header(default=""),
+):
+    verify_auth(authorization)
+    file_bytes = await file.read()
+    filename = file.filename or "document"
+
+    try:
+        result = otranslator_service.translate_document(
+            file_bytes=file_bytes,
+            filename=filename,
+            source_lang=source_lang,
+            target_lang=target_lang,
+            glossary_name=glossary_name,
+            description=description,
+        )
+        translated_bytes = result["translated_bytes"]
+        return {
+            "filename": result["filename"],
+            "content_base64": base64.b64encode(translated_bytes).decode("ascii"),
+            "size": len(translated_bytes),
+            "taskId": result.get("taskId", ""),
+        }
+    except Exception as e:
+        logger.error(f"Ultra document translation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Translation failed: {str(e)}")
+
+
+@app.get("/ultra/balance")
+async def ultra_balance(authorization: str = Header(default="")):
+    verify_auth(authorization)
+    try:
+        return otranslator_service.get_balance()
+    except Exception as e:
+        logger.error(f"Ultra balance check failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/ultra/glossary/create")
+async def ultra_create_glossary(request: Request, authorization: str = Header(default="")):
+    verify_auth(authorization)
+    body = await request.json()
+
+    try:
+        return otranslator_service.create_glossary(
+            name=body["name"],
+            source_lang=body["source_lang"],
+            target_lang=body["target_lang"],
+            entries=body["entries"],
+        )
+    except Exception as e:
+        logger.error(f"Ultra glossary creation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ─── Error Handler ───────────────────────────────────────────────────────────

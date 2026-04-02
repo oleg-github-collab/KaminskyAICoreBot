@@ -199,6 +199,25 @@ pub fn countPdfPages(data: []const u8) u64 {
     return if (count > 0) count else 1;
 }
 
+/// ─── Translation Tier Pricing ─────────────────────────────────────
+/// (Glossary creation prices are priceForChars / priceForPages above)
+
+/// Calculate price in euro cents for Оптимум translation tier.
+/// €0.91 per 1800 chars = 91 cents per page-equivalent.
+pub fn priceTranslationOptimum(char_count: u64) i64 {
+    if (char_count == 0) return 0;
+    const units = (char_count + 1799) / 1800;
+    return @intCast(units * 91);
+}
+
+/// Calculate price in euro cents for Ультра translation tier.
+/// €1.35 per 1800 chars = 135 cents per page-equivalent.
+pub fn priceTranslationUltra(char_count: u64) i64 {
+    if (char_count == 0) return 0;
+    const units = (char_count + 1799) / 1800;
+    return @intCast(units * 135);
+}
+
 /// Determine file category based on mime type and extension
 pub fn categorizeFile(mime_type: ?[]const u8, file_name: ?[]const u8) []const u8 {
     if (mime_type) |mt| {

@@ -340,6 +340,8 @@ fn handleStripeImpl(body: []const u8) !void {
                 metadata: ?struct {
                     project_id: ?[]const u8 = null,
                     user_telegram_id: ?[]const u8 = null,
+                    invoice_type: ?[]const u8 = null,
+                    tier: ?[]const u8 = null,
                 } = null,
             } = null,
         } = null,
@@ -355,6 +357,7 @@ fn handleStripeImpl(body: []const u8) !void {
         const status = obj.payment_status orelse return;
 
         if (std.mem.eql(u8, status, "paid")) {
+            // Mark invoice as paid
             var stmt = try a.db.prepare(
                 "UPDATE invoices SET status = 'paid', paid_at = ? WHERE stripe_session_id = ?",
             );
@@ -363,32 +366,68 @@ fn handleStripeImpl(body: []const u8) !void {
             try stmt.bindText(2, session_id);
             try stmt.exec();
 
-            // Notify admin
-            var buf: [320]u8 = undefined;
-            const notify = std.fmt.bufPrint(&buf,
-                "✅ Оплата отримана!\nSession: {s}", .{session_id},
-            ) catch "✅ Payment received";
-            const resp = try a.tg.sendMessage(a.config.admin_chat_id, notify, null);
-            a.allocator.free(resp);
+            const metadata = obj.metadata orelse return;
+            const invoice_type = metadata.invoice_type orelse "glossary";
+
+            // Advance workflow based on invoice type
+            if (metadata.project_id) |pid_str| {
+                const pid = std.fmt.parseInt(i64, pid_str, 10) catch return;
+
+                if (std.mem.eql(u8, invoice_type, "translation")) {
+                    // Translation paid — advance to translation_processing
+                    var ws = try a.db.prepare(
+                        "UPDATE projects SET workflow_stage = 'translation_paid', updated_at = ? WHERE id = ?",
+                    );
+                    defer ws.deinit();
+                    try ws.bindInt(1, std.time.timestamp());
+                    try ws.bindInt(2, pid);
+                    try ws.exec();
+
+                    const tier_label: []const u8 = if (metadata.tier != null and std.mem.eql(u8, metadata.tier.?, "ultra")) "Ультра" else "Оптимум";
+
+                    // Notify admin
+                    var buf: [512]u8 = undefined;
+                    const notify = std.fmt.bufPrint(&buf,
+                        "\u{2705} Оплата за переклад ({s}) отримана!\nProject ID: {s}\nSession: {s}",
+                        .{ tier_label, pid_str, session_id },
+                    ) catch "\u{2705} Translation payment received";
+                    const resp = try a.tg.sendMessage(a.config.admin_chat_id, notify, null);
+                    a.allocator.free(resp);
+                } else {
+                    // Glossary paid — advance to glossary_paid
+                    var ws = try a.db.prepare(
+                        "UPDATE projects SET workflow_stage = 'glossary_paid', updated_at = ? WHERE id = ?",
+                    );
+                    defer ws.deinit();
+                    try ws.bindInt(1, std.time.timestamp());
+                    try ws.bindInt(2, pid);
+                    try ws.exec();
+
+                    // Notify admin
+                    var buf: [320]u8 = undefined;
+                    const notify = std.fmt.bufPrint(&buf,
+                        "\u{2705} Оплата за глосарій отримана!\nProject ID: {s}\nSession: {s}",
+                        .{ pid_str, session_id },
+                    ) catch "\u{2705} Glossary payment received";
+                    const resp = try a.tg.sendMessage(a.config.admin_chat_id, notify, null);
+                    a.allocator.free(resp);
+
+                    // Initialize admin workflow (glossary preparation)
+                    workflow.initWorkflow(a.allocator, &a.db, &a.tg, pid, a.config.admin_chat_id) catch |err| {
+                        std.log.err("Failed to init workflow for project {d}: {}", .{ pid, err });
+                    };
+                }
+            }
 
             // Notify client
-            const metadata = obj.metadata orelse return;
             if (metadata.user_telegram_id) |uid_str| {
                 const uid = std.fmt.parseInt(i64, uid_str, 10) catch return;
                 const cr = try a.tg.sendMessage(
                     uid,
-                    "✅ Оплату успішно отримано! Дякуємо!\n\nОбробка вашого замовлення розпочинається.",
+                    "\u{2705} Оплату успішно отримано! Дякуємо!\n\nОбробка вашого замовлення розпочинається.",
                     null,
                 );
                 a.allocator.free(cr);
-            }
-
-            // Initialize admin workflow (5-step process)
-            if (metadata.project_id) |pid_str| {
-                const pid = std.fmt.parseInt(i64, pid_str, 10) catch return;
-                workflow.initWorkflow(a.allocator, &a.db, &a.tg, pid, a.config.admin_chat_id) catch |err| {
-                    std.log.err("Failed to init workflow for project {d}: {}", .{ pid, err });
-                };
             }
         }
     }

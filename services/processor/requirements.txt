@@ -35,3 +35,4 @@ ebooklib==0.18
 # AI & Translation
 deepl==1.19.1
 openai>=1.82.0
+requests>=2.31.0

@@ -37,6 +37,10 @@ const GlossaryView = {
                     </div>
                 </div>
                 <button class="btn btn-secondary btn-sm" onclick="GlossaryView.syncGlossary(${project.id})">\ud83d\udd04 Синхронізувати</button>
+                <label class="btn btn-secondary btn-sm" style="cursor:pointer">
+                    \ud83d\udce4 Імпорт
+                    <input type="file" accept=".tsv,.csv,.txt" style="display:none" onchange="GlossaryView.importFile(${project.id}, this)">
+                </label>
                 <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="GlossaryView.bulkApprove(${project.id})">\u2713 Затвердити всі</button>
             </div>
             <div id="batch-actions" style="display:none"></div>
@@ -496,6 +500,74 @@ const GlossaryView = {
             App.toast('Експорт JSON завершено', 'success');
         } catch (e) {
             App.toast(e.message, 'error');
+        }
+    },
+
+    async importFile(pid, input) {
+        const file = input.files[0];
+        if (!file) return;
+        input.value = '';
+
+        try {
+            const text = await file.text();
+            const isTSV = file.name.endsWith('.tsv') || file.name.endsWith('.txt');
+            const delimiter = isTSV ? '\t' : ',';
+
+            const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            if (lines.length === 0) {
+                App.toast('Файл порожній', 'warning');
+                return;
+            }
+
+            // Skip header if it looks like one
+            let startIdx = 0;
+            const firstLine = lines[0].toLowerCase();
+            if (firstLine.includes('source') || firstLine.includes('target') ||
+                firstLine.includes('оригінал') || firstLine.includes('переклад')) {
+                startIdx = 1;
+            }
+
+            const terms = [];
+            for (let i = startIdx; i < lines.length; i++) {
+                let cols;
+                if (delimiter === ',') {
+                    // Simple CSV parse (handles quoted fields)
+                    cols = lines[i].match(/(".*?"|[^,]+)/g) || [];
+                    cols = cols.map(c => c.replace(/^"|"$/g, '').trim());
+                } else {
+                    cols = lines[i].split(delimiter).map(c => c.trim());
+                }
+                if (cols.length >= 2 && cols[0] && cols[1]) {
+                    terms.push({
+                        source_term: cols[0],
+                        target_term: cols[1],
+                        domain: cols[2] || '',
+                    });
+                }
+            }
+
+            if (terms.length === 0) {
+                App.toast('Не знайдено термінів у файлі', 'warning');
+                return;
+            }
+
+            App.modalConfirm(
+                'Імпорт глосарію',
+                `Імпортувати ${terms.length} термінів з ${App.esc(file.name)}?`,
+                async () => {
+                    try {
+                        await API.importGlossary(pid, terms);
+                        await this.loadTerms(pid);
+                        App.toast(`Імпортовано ${terms.length} термінів`, 'success');
+                    } catch (e) {
+                        App.toast(e.message, 'error');
+                    }
+                },
+                'Імпортувати',
+                'Скасувати'
+            );
+        } catch (e) {
+            App.toast('Помилка читання файлу: ' + e.message, 'error');
         }
     },
 

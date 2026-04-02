@@ -2990,6 +2990,9 @@ select:focus-visible {
 .hl-suggestion-accepted { background: rgba(34, 197, 94, 0.15); border-radius: 2px; }
 .hl-suggestion-rejected { background: rgba(239, 68, 68, 0.1); text-decoration: line-through; color: var(--hint); border-radius: 2px; }
 .hl-active { outline: 2px solid var(--btn); outline-offset: 2px; border-radius: 2px; }
+/* Native document highlights (PDF text layer / DOCX rendered DOM) */
+mark.hl-native { padding: 0; margin: 0; line-height: inherit; }
+.pdf-text-layer mark.hl-native { position: relative; z-index: 1; }
 
 /* Flash animation for comment items */
 .comment-flash { animation: commentFlash .6s ease; }
@@ -3109,7 +3112,7 @@ select:focus-visible {
 .selection-toolbar {
     display: flex; gap: 2px; background: var(--bg); border: 1px solid var(--border);
     border-radius: 10px; padding: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-    z-index: 10000; position: absolute; animation: fadeIn .15s ease;
+    z-index: 10000; position: fixed; animation: fadeIn .15s ease;
 }
 .selection-toolbar button {
     padding: 7px 12px; border: none; background: none; cursor: pointer;
@@ -3147,3 +3150,309 @@ select:focus-visible {
     .cv-editor-wrap .ql-editor { min-height: 38px; }
     .cv-action-btn { min-height: 44px; padding: 8px 16px; font-size: 14px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   SaaS Workflow Engine — Tiers, Workflow Bar, Review Badges
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Design Tokens ── */
+:root {
+    --tier-optimum: #3b82f6;
+    --tier-optimum-bg: #eff6ff;
+    --tier-ultra: #8b5cf6;
+    --tier-ultra-bg: #f5f3ff;
+    --tier-ultra-gradient: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 50%, #c4b5fd 100%);
+    --workflow-completed: linear-gradient(90deg, #34d399, #10b981);
+    --workflow-active: #3b82f6;
+    --workflow-pending: #d1d5db;
+    --workflow-line-width: 3px;
+    --status-pending: #9ca3af;
+    --status-review: #3b82f6;
+    --status-approved: #10b981;
+    --status-edited: #8b5cf6;
+    --status-revision: #ef4444;
+}
+
+/* ── Workflow Progress Bar ── */
+.workflow-bar {
+    display: flex; align-items: flex-start; justify-content: center;
+    gap: 0; padding: 20px 24px;
+    background: rgba(255,255,255,.6);
+    backdrop-filter: blur(12px) saturate(120%);
+    border-radius: 16px; margin-bottom: 20px;
+    border: 1px solid rgba(0,0,0,.04);
+    box-shadow: 0 1px 3px rgba(0,0,0,.04);
+}
+.workflow-step {
+    display: flex; flex-direction: column; align-items: center;
+    min-width: 64px; position: relative; cursor: default;
+}
+.workflow-dot {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 3px solid var(--workflow-pending);
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    transition: all .3s ease;
+    font-size: 13px; color: var(--hint);
+    flex-shrink: 0;
+}
+.workflow-dot.completed {
+    background: var(--green); border-color: var(--green); color: white;
+    font-size: 11px;
+}
+.workflow-dot.active {
+    border-color: var(--workflow-active);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, .2);
+    animation: workflowPulse 2s infinite;
+    color: var(--workflow-active); font-size: 10px;
+}
+.workflow-line {
+    flex: 1; height: var(--workflow-line-width);
+    background: var(--workflow-pending);
+    min-width: 24px; margin-top: 12px;
+    border-radius: 2px;
+}
+.workflow-line.completed {
+    background: var(--green);
+}
+.workflow-label {
+    font-size: 11px; color: var(--hint);
+    margin-top: 6px; white-space: nowrap;
+    font-weight: 500;
+}
+.workflow-hint {
+    font-size: 10px; color: var(--workflow-active);
+    margin-top: 2px; white-space: nowrap;
+}
+@keyframes workflowPulse {
+    0%, 100% { box-shadow: 0 0 0 4px rgba(59, 130, 246, .2); }
+    50% { box-shadow: 0 0 0 8px rgba(59, 130, 246, .06); }
+}
+@media (max-width: 767px) {
+    .workflow-bar { padding: 14px 12px; gap: 0; overflow-x: auto; justify-content: flex-start; }
+    .workflow-step { min-width: 48px; }
+    .workflow-dot { width: 24px; height: 24px; font-size: 10px; }
+    .workflow-line { min-width: 16px; margin-top: 10px; }
+    .workflow-label { font-size: 10px; }
+}
+
+/* ── Tier Selection Cards ── */
+.tier-selector { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+.tier-card {
+    border: 2px solid var(--border); border-radius: 16px;
+    padding: 28px 24px; cursor: pointer;
+    transition: all .25s cubic-bezier(.4,0,.2,1);
+    position: relative; overflow: hidden;
+    background: var(--bg);
+}
+.tier-card::before {
+    content: ''; position: absolute;
+    top: 0; left: -100%; width: 200%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.06), transparent);
+    transition: left .5s ease; pointer-events: none;
+}
+.tier-card:hover::before { left: 100%; }
+.tier-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0,0,0,.08);
+}
+.tier-card.selected {
+    border-color: transparent;
+    background-image: linear-gradient(var(--bg), var(--bg)), var(--gradient-primary);
+    background-origin: border-box;
+    background-clip: padding-box, border-box;
+    box-shadow: 0 8px 32px rgba(102, 126, 234, .15);
+    transform: scale(1.01);
+}
+.tier-card .tier-badge {
+    position: absolute; top: 12px; right: 12px;
+    background: var(--tier-ultra-gradient);
+    color: white; font-size: 11px; font-weight: 600;
+    padding: 4px 12px; border-radius: 20px;
+    letter-spacing: .3px;
+}
+.tier-card .tier-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+.tier-card .tier-price { font-size: 28px; font-weight: 700; margin: 8px 0 20px; }
+.tier-card .tier-price .currency { font-size: 18px; font-weight: 500; vertical-align: super; }
+.tier-card .tier-features { list-style: none; padding: 0; margin: 0 0 16px; }
+.tier-card .tier-features li {
+    padding: 4px 0; font-size: 14px; color: var(--text);
+    display: flex; align-items: flex-start; gap: 8px; line-height: 1.4;
+}
+.tier-card .tier-features li::before {
+    content: '\2713'; color: var(--green); font-weight: 600;
+    flex-shrink: 0; margin-top: 1px;
+}
+.tier-card.selected .tier-features li::before { color: var(--btn); }
+.tier-card .tier-formats {
+    font-size: 12px; color: var(--hint); margin-top: 12px;
+    padding-top: 12px; border-top: 1px solid var(--border);
+}
+.tier-card .tier-radio {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 16px; font-size: 14px; color: var(--hint);
+}
+.tier-card .tier-radio-dot {
+    width: 20px; height: 20px; border-radius: 50%;
+    border: 2px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    transition: all .2s ease;
+}
+.tier-card.selected .tier-radio-dot {
+    border-color: var(--btn);
+    background: var(--btn);
+}
+.tier-card.selected .tier-radio-dot::after {
+    content: ''; width: 8px; height: 8px; border-radius: 50%;
+    background: white;
+}
+@media (max-width: 767px) {
+    .tier-selector { grid-template-columns: 1fr; gap: 12px; }
+    .tier-card { padding: 20px 16px; }
+    .tier-card .tier-price { font-size: 24px; margin: 6px 0 16px; }
+    .tier-card:hover { transform: none; }
+    .tier-card:active { transform: scale(0.99); }
+}
+
+/* ── Settings Mini Tier Cards ── */
+.tier-mini-card {
+    flex: 1; padding: 14px 12px; border-radius: 12px;
+    border: 2px solid var(--border); cursor: pointer;
+    transition: all .2s ease; text-align: center;
+    background: var(--bg); position: relative;
+}
+.tier-mini-card:hover { border-color: var(--hint); }
+.tier-mini-card.selected {
+    border-color: transparent;
+    background-image: linear-gradient(var(--bg), var(--bg)), var(--gradient-primary);
+    background-origin: border-box;
+    background-clip: padding-box, border-box;
+    box-shadow: 0 4px 16px rgba(102, 126, 234, .12);
+}
+.tier-mini-card .tier-radio { margin-top: 8px; }
+
+/* ── Order CTA Button ── */
+.btn-order {
+    width: 100%; height: 52px; border-radius: 14px;
+    background: var(--gradient-primary);
+    color: white; font-size: 16px; font-weight: 600;
+    border: none; cursor: pointer;
+    transition: all .2s cubic-bezier(.4,0,.2,1);
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    gap: 8px; margin-top: 16px;
+}
+.btn-order:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(102, 126, 234, .35);
+}
+.btn-order:active {
+    transform: scale(0.98) translateY(0);
+    box-shadow: 0 2px 8px rgba(102, 126, 234, .2);
+}
+.btn-order:disabled {
+    opacity: .5; cursor: not-allowed; transform: none;
+    box-shadow: none;
+}
+
+/* ── Order Summary ── */
+.order-summary { animation: summaryIn .3s ease-out; }
+.order-file-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; font-size: 14px;
+}
+.order-file-row .file-name { display: flex; align-items: center; gap: 8px; }
+.order-file-row .file-stats { color: var(--hint); font-size: 13px; }
+.order-file-row .file-price { font-weight: 600; white-space: nowrap; }
+.order-total {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 0; font-size: 16px; font-weight: 600;
+    border-top: 2px dashed var(--border); margin-top: 8px;
+}
+@keyframes summaryIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Review Status Badges ── */
+.review-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 12px; border-radius: 20px;
+    font-size: 12px; font-weight: 500;
+    line-height: 1.4;
+}
+.review-badge.pending { background: #f3f4f6; color: #6b7280; }
+.review-badge.review { background: var(--blue-bg); color: var(--blue-text); }
+.review-badge.approved { background: var(--green-bg); color: var(--green-text); }
+.review-badge.edited { background: #f5f3ff; color: #6d28d9; }
+.review-badge.client-review { background: #fff7ed; color: #9a3412; }
+.review-badge.revision { background: var(--red-bg); color: var(--red-text); }
+
+/* ── Invoice History Cards ── */
+.invoice-card {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px; border-radius: 12px;
+    border: 1px solid var(--border); margin-bottom: 8px;
+    transition: all .15s ease;
+}
+.invoice-card:hover { background: var(--bg2); }
+.invoice-card.paid { border-left: 3px solid var(--green); }
+.invoice-card.pending { border-left: 3px solid var(--yellow); }
+.invoice-card .invoice-icon { font-size: 18px; flex-shrink: 0; }
+.invoice-card .invoice-details { flex: 1; }
+.invoice-card .invoice-amount { font-weight: 600; font-size: 15px; }
+.invoice-card .invoice-meta { font-size: 12px; color: var(--hint); margin-top: 2px; }
+.invoice-card .invoice-action {
+    font-size: 13px; color: var(--link); cursor: pointer;
+    text-decoration: none; font-weight: 500;
+}
+
+/* ── Onboarding Guide ── */
+.onboarding-card {
+    background: linear-gradient(135deg, rgba(102,126,234,.04) 0%, rgba(118,75,162,.04) 100%);
+    border: 1px solid rgba(102,126,234,.12);
+    border-radius: 16px; padding: 24px;
+    margin-bottom: 20px; position: relative;
+}
+.onboarding-card .onboarding-close {
+    position: absolute; top: 12px; right: 12px;
+    background: none; border: none; font-size: 18px;
+    color: var(--hint); cursor: pointer; padding: 4px 8px;
+    border-radius: 8px; transition: background .15s;
+}
+.onboarding-card .onboarding-close:hover { background: rgba(0,0,0,.05); }
+.onboarding-card h3 { font-size: 16px; font-weight: 600; margin: 0 0 16px; }
+.onboarding-step {
+    display: flex; gap: 12px; margin-bottom: 12px; align-items: flex-start;
+}
+.onboarding-step-num {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--gradient-primary); color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 600; flex-shrink: 0;
+}
+.onboarding-step-text { font-size: 14px; line-height: 1.5; }
+.onboarding-step-text strong { display: block; margin-bottom: 2px; }
+.onboarding-step-text span { color: var(--hint); font-size: 13px; }
+
+/* ── Empty States ── */
+.empty-state {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; padding: 48px 24px; text-align: center;
+}
+.empty-state-icon { font-size: 48px; margin-bottom: 16px; opacity: .6; }
+.empty-state-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+.empty-state-text { font-size: 14px; color: var(--hint); line-height: 1.5; max-width: 300px; }
+.empty-state .btn { margin-top: 16px; }
+
+/* ── Payment Success Animation ── */
+@keyframes celebrateGlow {
+    0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, .4); }
+    70% { box-shadow: 0 0 0 16px rgba(52, 211, 153, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+}
+.payment-success { animation: celebrateGlow .6s ease-out; }
+
+/* ── Price Animation ── */
+.price-animated { transition: opacity .15s, transform .15s; }
+.price-animated.changing { opacity: 0; transform: translateY(-4px); }

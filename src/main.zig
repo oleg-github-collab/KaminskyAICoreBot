@@ -144,6 +144,7 @@ pub fn main() !void {
     router.get("/app/lib/onboarding.js", serveOnboardingJS, .{});
     router.get("/app/components/inbox.js", serveInboxJS, .{});
     router.get("/app/components/instructions.js", serveInstructionsJS, .{});
+    router.get("/app/components/workflow-bar.js", serveWorkflowBarJS, .{});
 
     // REST API for Mini App
     router.get("/api/health", handler.handleHealth, .{});
@@ -174,6 +175,7 @@ pub fn main() !void {
     router.post("/api/projects/:project_id/glossary/terms/:term_id", miniapp_api.handleUpdateGlossaryTerm, .{});
     router.get("/api/projects/:project_id/glossary/export", miniapp_api.handleExportGlossary, .{});
     router.post("/api/projects/:project_id/glossary/sync", miniapp_api.handleSyncDeepL, .{});
+    router.post("/api/projects/:project_id/glossary/import", miniapp_api.handleImportGlossary, .{});
     router.get("/api/projects/:project_id/messages", miniapp_api.handleMessages, .{});
     router.post("/api/projects/:project_id/messages", miniapp_api.handleSendMessage, .{});
     router.get("/api/projects/:project_id/pricing", miniapp_api.handlePricing, .{});
@@ -185,6 +187,7 @@ pub fn main() !void {
     router.get("/api/projects/:project_id/settings", miniapp_api.handleGetSettings, .{});
     router.post("/api/projects/:project_id/settings", miniapp_api.handleUpdateSettings, .{});
     router.get("/api/projects/:project_id/workflow", miniapp_api.handleWorkflowStatus, .{});
+    router.post("/api/projects/:project_id/workflow/advance", miniapp_api.handleAdvanceWorkflow, .{});
     router.get("/api/projects/:project_id/instructions", miniapp_api.handleGetInstructions, .{});
     router.post("/api/projects/:project_id/instructions", miniapp_api.handleUpdateInstructions, .{});
     router.get("/api/projects/:project_id/comments", miniapp_api.handleGetComments, .{});
@@ -362,4 +365,9 @@ fn serveInstructionsJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
     res.body = @embedFile("web/components/instructions.js");
+}
+fn serveWorkflowBarJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/workflow-bar.js");
 }

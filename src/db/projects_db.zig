@@ -10,6 +10,7 @@ pub const ProjectRecord = struct {
     target_lang: []const u8,
     invite_code: []const u8,
     is_active: bool,
+    workflow_stage: []const u8 = "files_uploaded",
 };
 
 pub fn create(allocator: std.mem.Allocator, db: *sqlite.Db, owner_id: i64, name: []const u8, description: []const u8) !ProjectRecord {
@@ -63,7 +64,7 @@ pub fn create(allocator: std.mem.Allocator, db: *sqlite.Db, owner_id: i64, name:
 /// Get project by ID. Strings are duped into allocator and survive after statement finalization.
 pub fn getById(allocator: std.mem.Allocator, db: *sqlite.Db, project_id: i64) !?ProjectRecord {
     var stmt = try db.prepare(
-        "SELECT id, owner_id, name, description, source_lang, target_lang, invite_code, is_active FROM projects WHERE id = ?",
+        "SELECT id, owner_id, name, description, source_lang, target_lang, invite_code, is_active, workflow_stage FROM projects WHERE id = ?",
     );
     defer stmt.deinit();
     try stmt.bindInt(1, project_id);
@@ -71,6 +72,7 @@ pub fn getById(allocator: std.mem.Allocator, db: *sqlite.Db, project_id: i64) !?
     if (try stmt.step()) {
         // Dupe all text columns — sqlite3_column_text returns pointers into statement buffer,
         // which becomes invalid after stmt.deinit(). Without duping, callers get use-after-free.
+        const ws = try dupCol(allocator, stmt.columnText(8));
         return ProjectRecord{
             .id = stmt.columnInt(0),
             .owner_id = stmt.columnInt(1),
@@ -80,6 +82,7 @@ pub fn getById(allocator: std.mem.Allocator, db: *sqlite.Db, project_id: i64) !?
             .target_lang = try dupCol(allocator, stmt.columnText(5)),
             .invite_code = try dupCol(allocator, stmt.columnText(6)),
             .is_active = stmt.columnInt(7) == 1,
+            .workflow_stage = if (ws.len > 0) ws else "files_uploaded",
         };
     }
     return null;
@@ -88,12 +91,13 @@ pub fn getById(allocator: std.mem.Allocator, db: *sqlite.Db, project_id: i64) !?
 /// Get project by invite code. Strings are duped into allocator.
 pub fn getByInviteCode(allocator: std.mem.Allocator, db: *sqlite.Db, code: []const u8) !?ProjectRecord {
     var stmt = try db.prepare(
-        "SELECT id, owner_id, name, description, source_lang, target_lang, invite_code, is_active FROM projects WHERE invite_code = ?",
+        "SELECT id, owner_id, name, description, source_lang, target_lang, invite_code, is_active, workflow_stage FROM projects WHERE invite_code = ?",
     );
     defer stmt.deinit();
     try stmt.bindText(1, code);
 
     if (try stmt.step()) {
+        const ws = try dupCol(allocator, stmt.columnText(8));
         return ProjectRecord{
             .id = stmt.columnInt(0),
             .owner_id = stmt.columnInt(1),
@@ -103,6 +107,7 @@ pub fn getByInviteCode(allocator: std.mem.Allocator, db: *sqlite.Db, code: []con
             .target_lang = try dupCol(allocator, stmt.columnText(5)),
             .invite_code = try dupCol(allocator, stmt.columnText(6)),
             .is_active = stmt.columnInt(7) == 1,
+            .workflow_stage = if (ws.len > 0) ws else "files_uploaded",
         };
     }
     return null;

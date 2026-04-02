@@ -638,6 +638,122 @@ fn stripXmlTags(allocator: std.mem.Allocator, xml: []const u8) ![]const u8 {
     return try result.toOwnedSlice();
 }
 
+/// Translate text via Python processor → Ultra (O.Translator).
+pub fn translateTextUltra(
+    allocator: std.mem.Allocator,
+    config: *const config_mod.Config,
+    texts: []const []const u8,
+    source_lang: []const u8,
+    target_lang: []const u8,
+    description: []const u8,
+) ![]const u8 {
+    const processor_url = config.processor_url;
+    if (processor_url.len == 0) return error.ProcessorNotConfigured;
+
+    var url_buf: [512]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "{s}/ultra/translate-text", .{processor_url});
+
+    const body = try std.json.stringifyAlloc(allocator, .{
+        .texts = texts,
+        .from_lang = source_lang,
+        .to_lang = target_lang,
+        .description = description,
+    }, .{});
+    defer allocator.free(body);
+
+    const auth_header = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key});
+    defer allocator.free(auth_header);
+
+    const result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{
+            "curl", "-s", "-f",
+            "--connect-timeout", "10",
+            "--max-time", "300",
+            "-X", "POST",
+            "-H", "Content-Type: application/json",
+            "-H", auth_header,
+            "-d", body,
+            url,
+        },
+    });
+    defer allocator.free(result.stderr);
+
+    const ok = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!ok) {
+        allocator.free(result.stdout);
+        std.log.err("Processor /ultra/translate-text failed, stderr: {s}", .{result.stderr});
+        return error.ProcessorCallFailed;
+    }
+
+    return result.stdout;
+}
+
+/// Translate document via Python processor → Ultra (O.Translator).
+/// Returns raw JSON response with base64-encoded translated file.
+pub fn translateDocumentUltra(
+    allocator: std.mem.Allocator,
+    config: *const config_mod.Config,
+    file_path: []const u8,
+    original_name: []const u8,
+    source_lang: []const u8,
+    target_lang: []const u8,
+    glossary_name: []const u8,
+    description: []const u8,
+) ![]const u8 {
+    const processor_url = config.processor_url;
+    if (processor_url.len == 0) return error.ProcessorNotConfigured;
+
+    var url_buf: [512]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "{s}/ultra/translate-document", .{processor_url});
+
+    const auth_header = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key});
+    defer allocator.free(auth_header);
+    const file_arg = try std.fmt.allocPrint(allocator, "file=@{s};filename={s}", .{ file_path, original_name });
+    defer allocator.free(file_arg);
+    const from_arg = try std.fmt.allocPrint(allocator, "from_lang={s}", .{source_lang});
+    defer allocator.free(from_arg);
+    const to_arg = try std.fmt.allocPrint(allocator, "to_lang={s}", .{target_lang});
+    defer allocator.free(to_arg);
+    const glossary_arg = try std.fmt.allocPrint(allocator, "glossary_name={s}", .{glossary_name});
+    defer allocator.free(glossary_arg);
+    const desc_arg = try std.fmt.allocPrint(allocator, "description={s}", .{description});
+    defer allocator.free(desc_arg);
+
+    const result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{
+            "curl", "-s", "-f",
+            "--connect-timeout", "10",
+            "--max-time", "600",
+            "-X", "POST",
+            "-H", auth_header,
+            "-F", file_arg,
+            "-F", from_arg,
+            "-F", to_arg,
+            "-F", glossary_arg,
+            "-F", desc_arg,
+            url,
+        },
+    });
+    defer allocator.free(result.stderr);
+
+    const ok = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!ok) {
+        allocator.free(result.stdout);
+        std.log.err("Processor /ultra/translate-document failed, stderr: {s}", .{result.stderr});
+        return error.ProcessorCallFailed;
+    }
+
+    return result.stdout;
+}
+
 /// Extract text with retry (3 attempts, exponential backoff).
 pub fn extractTextWithRetry(
     allocator: std.mem.Allocator,

@@ -459,8 +459,11 @@ const FileViewer = {
         const textEl = document.getElementById('fv-text');
         if (!textEl || !this.currentContent) return;
 
-        // For HTML/native content, skip offset-based highlighting (not compatible)
-        if (this.currentContentType === 'html' || this.currentContentType === 'native') return;
+        // For HTML/native content, use DOM-based highlighting
+        if (this.currentContentType === 'html' || this.currentContentType === 'native') {
+            this.rebuildHighlightsNative(textEl);
+            return;
+        }
 
         const comments = CommentsView.comments || [];
         const anchored = comments.filter(c => c.start_offset != null && c.end_offset != null && c.start_offset !== c.end_offset);
@@ -516,6 +519,95 @@ const FileViewer = {
         this.attachSelectionHandler(textEl.parentElement);
     },
 
+    // Highlight comments/suggestions on native-rendered PDF/DOCX by walking DOM text nodes
+    rebuildHighlightsNative(container) {
+        if (!container) return;
+
+        // Remove any previous native highlights
+        container.querySelectorAll('mark.hl-native').forEach(m => {
+            const parent = m.parentNode;
+            while (m.firstChild) parent.insertBefore(m.firstChild, m);
+            parent.removeChild(m);
+            parent.normalize();
+        });
+
+        const comments = CommentsView.comments || [];
+        const anchored = comments.filter(c =>
+            c.start_offset != null && c.end_offset != null && c.start_offset !== c.end_offset
+        );
+        if (anchored.length === 0) return;
+
+        anchored.sort((a, b) => a.start_offset - b.start_offset);
+
+        // Collect all text nodes in document order
+        const textNodes = [];
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) textNodes.push(walker.currentNode);
+        if (textNodes.length === 0) return;
+
+        // Build offset map: each text node's start offset in the full text
+        const nodeOffsets = [];
+        let runningOffset = 0;
+        for (const node of textNodes) {
+            nodeOffsets.push(runningOffset);
+            runningOffset += node.textContent.length;
+        }
+
+        // For each comment, find overlapping text nodes and wrap ranges
+        for (const c of anchored) {
+            const cStart = c.start_offset;
+            const cEnd = Math.min(c.end_offset, runningOffset);
+            if (cStart >= cEnd) continue;
+
+            let cls = 'hl-comment';
+            if (c.comment_type === 'suggestion') {
+                cls = c.suggestion_status === 'accepted' ? 'hl-suggestion-accepted'
+                    : c.suggestion_status === 'rejected' ? 'hl-suggestion-rejected'
+                    : 'hl-suggestion-pending';
+            }
+
+            for (let i = 0; i < textNodes.length; i++) {
+                const nodeStart = nodeOffsets[i];
+                const nodeEnd = nodeStart + textNodes[i].textContent.length;
+
+                // Skip nodes entirely before or after this comment
+                if (nodeEnd <= cStart || nodeStart >= cEnd) continue;
+
+                const node = textNodes[i];
+                const localStart = Math.max(0, cStart - nodeStart);
+                const localEnd = Math.min(node.textContent.length, cEnd - nodeStart);
+
+                try {
+                    const range = document.createRange();
+                    range.setStart(node, localStart);
+                    range.setEnd(node, localEnd);
+
+                    const mark = document.createElement('mark');
+                    mark.className = 'hl-native ' + cls;
+                    mark.dataset.commentIds = String(c.id);
+                    mark.addEventListener('click', (e) => this.onHighlightClick(e));
+                    range.surroundContents(mark);
+
+                    // After wrapping, the text nodes array is stale — rebuild for remaining comments
+                    // This is acceptable since we process comments in order
+                } catch (e) {
+                    // surroundContents can fail if range crosses element boundaries — skip silently
+                }
+            }
+
+            // Rebuild text node list after each wrap (nodes split)
+            textNodes.length = 0;
+            nodeOffsets.length = 0;
+            const w2 = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+            runningOffset = 0;
+            while (w2.nextNode()) {
+                textNodes.push(w2.currentNode);
+                nodeOffsets.push(runningOffset);
+                runningOffset += w2.currentNode.textContent.length;
+            }
+        }
+    },
+
     onHighlightClick(e) {
         const mark = e.target.closest('mark');
         if (!mark) return;
@@ -566,26 +658,27 @@ const FileViewer = {
             try { range = selection.getRangeAt(0); } catch(e) { return; }
             const offsets = this.calculateOffsets(range, textEl);
 
-            // Position: use range rect if reasonable, else use last cursor position
+            // Position: use viewport-relative coords (fixed positioning)
+            // getBoundingClientRect() returns viewport coords — no scroll offset needed
             const rect = range.getBoundingClientRect();
             let top, left;
 
             if (rect && rect.height > 0 && rect.height < window.innerHeight * 0.7 && rect.bottom > 0) {
-                top = rect.bottom + window.scrollY + 6;
-                left = rect.left + window.scrollX;
+                top = rect.bottom + 6;
+                left = rect.left;
             } else {
                 // Large selection or off-screen rect — use last known cursor position
-                top = lastPtr.y + window.scrollY + 12;
-                left = lastPtr.x + window.scrollX - 80;
+                top = lastPtr.y + 12;
+                left = lastPtr.x - 80;
             }
 
             // Clamp within viewport
-            left = Math.max(8, Math.min(left, window.innerWidth + window.scrollX - 300));
-            top = Math.min(top, window.scrollY + window.innerHeight - 60);
+            left = Math.max(8, Math.min(left, window.innerWidth - 300));
+            top = Math.min(top, window.innerHeight - 60);
 
             const toolbar = document.createElement('div');
             toolbar.className = 'selection-toolbar';
-            toolbar.style.position = 'absolute';
+            toolbar.style.position = 'fixed';
             toolbar.style.top = top + 'px';
             toolbar.style.left = left + 'px';
             toolbar.innerHTML =

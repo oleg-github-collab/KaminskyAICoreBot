@@ -89,6 +89,7 @@ const API = {
     updateTerm(pid, termId, data) { return this.req('POST', '/projects/' + pid + '/glossary/terms/' + termId, data); },
     exportGlossary(pid, format) { return this.req('GET', '/projects/' + pid + '/glossary/export?format=' + (format || 'tsv')); },
     syncGlossary(pid) { return this.req('POST', '/projects/' + pid + '/glossary/sync'); },
+    importGlossary(pid, terms) { return this.req('POST', '/projects/' + pid + '/glossary/import', { terms }); },
 
     // Glossary versions
     getGlossaryVersions(pid) { return this.req('GET', '/projects/' + pid + '/glossary/versions'); },
@@ -142,7 +143,7 @@ const API = {
 
     // Pricing
     getPricing(pid) { return this.req('GET', '/projects/' + pid + '/pricing'); },
-    createInvoice(pid) { return this.req('POST', '/projects/' + pid + '/invoices'); },
+    createInvoice(pid, body) { return this.req('POST', '/projects/' + pid + '/invoices', body); },
     getInvoices(pid) { return this.req('GET', '/projects/' + pid + '/invoices'); },
 
     // Settings
@@ -151,6 +152,7 @@ const API = {
 
     // Workflow
     getWorkflow(pid) { return this.req('GET', '/projects/' + pid + '/workflow'); },
+    advanceWorkflow(pid, stage) { return this.req('POST', '/projects/' + pid + '/workflow/advance', { stage }); },
 
     // Auth
     createSession() { return this.req('POST', '/auth/session'); },
