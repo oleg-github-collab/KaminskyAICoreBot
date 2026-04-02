@@ -569,7 +569,7 @@ fn createStripeCheckoutSession(
     var auth_header_buf: [512]u8 = undefined;
     const auth_header = std.fmt.bufPrint(&auth_header_buf, "Authorization: Bearer {s}", .{secret_key}) catch return error.StripeSessionFailed;
 
-    std.log.info("Stripe: creating checkout via curl, amount={d} cents, project={s}", .{ amount_cents, project_name });
+    std.log.info("Stripe: creating checkout via curl, amount={d} cents, product={s}", .{ amount_cents, product_name });
 
     // Use curl for bulletproof HTTPS — Zig's TLS can fail in Docker
     const result = std.process.Child.run(.{
