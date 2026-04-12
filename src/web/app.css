@@ -2292,11 +2292,22 @@ mark {
         pointer-events: auto;
     }
 
-    #main { margin-left: 0; }
+    /* Viewport containment — nothing overflows horizontally */
+    #app {
+        max-width: 100vw;
+        overflow-x: hidden;
+    }
+    #main {
+        margin-left: 0;
+        max-width: 100vw;
+        overflow-x: hidden;
+    }
     #bottom-nav { display: flex; }
 
     body {
         font-size: 15px;
+        max-width: 100vw;
+        overflow-x: hidden;
         -webkit-tap-highlight-color: transparent;
         -webkit-touch-callout: none;
         overscroll-behavior: contain;
@@ -2313,10 +2324,12 @@ mark {
     .header-left { gap: 8px; }
     .header-right { display: none; } /* hide project badge on mobile — saves space */
 
-    /* Content area — bottom padding for nav+FAB */
+    /* Content area — bottom padding for nav+FAB, clipped to viewport */
     #content {
         padding: 12px 16px 110px;
-        max-width: none;
+        max-width: 100%;
+        overflow-x: hidden;
+        word-break: break-word;
     }
 
     /* FAB above bottom nav */
@@ -2561,6 +2574,36 @@ mark {
 
     /* Footer — compact on mobile */
     footer { padding: 10px 0 !important; font-size: 11px !important; }
+
+    /* ── Overflow containment — keep everything inside viewport ── */
+    .card, .settings-card, .invite-card, .info-banner, .admin-panel {
+        max-width: 100%;
+        overflow: hidden;
+    }
+    .create-row { flex-wrap: wrap; }
+    .create-row .input { min-width: 0; }
+
+    /* Order rows — stack stats under name on very narrow screens */
+    .order-file-row { flex-wrap: wrap; gap: 4px; }
+    .order-file-row .file-stats { margin: 0; }
+
+    /* Tables — scrollable container */
+    .diff-table, table { max-width: 100%; }
+    .diff-panel { overflow-x: auto; }
+
+    /* Pre/code blocks */
+    pre, code { max-width: 100%; overflow-x: auto; word-break: break-all; }
+
+    /* Inline inputs/selects */
+    select, input[type="text"], input[type="email"], input[type="url"], input[readonly] {
+        max-width: 100%;
+    }
+
+    /* Sidebar logo text — clipped */
+    .sidebar-logo span { font-size: 17px; }
+
+    /* Progress indicators */
+    .wizard-progress { flex-wrap: nowrap; overflow-x: auto; justify-content: center; }
 }
 
 /* ═══════════ TABLET (600-959px) ═══════════ */
