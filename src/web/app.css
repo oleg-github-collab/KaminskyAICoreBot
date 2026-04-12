@@ -2265,8 +2265,33 @@ mark {
    RESPONSIVE — MOBILE (<768px)
    ═══════════════════════════════════════════════════════════════ */
 @media (max-width: 767px) {
-    /* Hide sidebar, show bottom nav */
-    #sidebar { display: none; }
+    /* Sidebar — off-screen, slides in on .open */
+    #sidebar {
+        transform: translateX(-100%);
+        width: 280px;
+        box-shadow: none;
+    }
+    #sidebar.open {
+        transform: translateX(0);
+        box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+    }
+
+    /* Sidebar overlay (dims content when sidebar open) */
+    .sidebar-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        z-index: calc(var(--z-sidebar) - 1);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity .3s ease;
+        -webkit-tap-highlight-color: transparent;
+    }
+    .sidebar-overlay.visible {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
     #main { margin-left: 0; }
     #bottom-nav { display: flex; }
 
@@ -2277,15 +2302,20 @@ mark {
         overscroll-behavior: contain;
     }
 
+    /* Header — compact, clipped breadcrumb */
     #header {
-        padding: 12px 16px;
+        padding: 10px 16px;
         position: sticky;
         top: 0;
     }
     #header h1 { font-size: 16px; }
+    .header-content { gap: 8px; }
+    .header-left { gap: 8px; }
+    .header-right { display: none; } /* hide project badge on mobile — saves space */
 
+    /* Content area — bottom padding for nav+FAB */
     #content {
-        padding: 12px 16px 100px; /* space for bottom nav + FAB */
+        padding: 12px 16px 110px;
         max-width: none;
     }
 
@@ -2298,7 +2328,7 @@ mark {
         border-radius: 16px;
     }
 
-    /* Cards */
+    /* Cards — bigger padding, no hover lift */
     .card {
         padding: 16px;
         margin-bottom: 10px;
@@ -2308,7 +2338,7 @@ mark {
     .card-title { font-size: 16px; }
     .card-sub { font-size: 14px; margin-top: 4px; }
 
-    /* Buttons — proper touch targets */
+    /* Buttons — 48px touch targets */
     .btn {
         padding: 14px 18px;
         font-size: 16px;
@@ -2317,6 +2347,7 @@ mark {
         display: flex;
         align-items: center;
         justify-content: center;
+        gap: 8px;
     }
     .btn:hover { opacity: 1; transform: none; }
     .btn:active { transform: scale(0.97); opacity: 0.9; }
@@ -2338,10 +2369,49 @@ mark {
 
     /* Section headers */
     .section-header { gap: 10px; margin-bottom: 14px; padding-bottom: 10px; }
-    .back-btn { width: 44px; height: 44px; border-radius: 12px; font-size: 18px; }
-    .section-header h2 { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .section-header h2 {
+        font-size: 16px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: calc(100vw - 120px);
+    }
 
-    /* Modal — bottom sheet */
+    /* File list — larger touch targets */
+    .file-item {
+        padding: 14px 12px;
+        gap: 10px;
+        border-radius: 12px;
+        margin: 4px 0;
+    }
+    .file-icon { width: 40px; height: 40px; margin-right: 10px; display: flex; align-items: center; justify-content: center; }
+    .file-icon .icon { width: 24px; height: 24px; }
+    .file-name { font-size: 15px; }
+    .file-meta { font-size: 13px; margin-top: 3px; line-height: 1.4; }
+    .file-actions { gap: 8px; }
+    .file-actions .btn-icon { min-width: 40px; min-height: 40px; padding: 8px; }
+
+    /* Tabs — scrollable, wider */
+    .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; gap: 6px; padding-bottom: 2px; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { white-space: nowrap; padding: 10px 16px; min-height: 44px; font-size: 14px; }
+
+    /* Settings cards */
+    .settings-card { padding: 16px; margin-bottom: 10px; }
+    .settings-card select, .settings-card textarea { font-size: 16px !important; }
+    .tier-selector-mini { flex-direction: column; }
+    .tier-mini-card { padding: 16px; }
+
+    /* Invite card */
+    .invite-card { padding: 16px; }
+    .invite-link-row { flex-direction: column; gap: 10px; }
+    .invite-link-row input { width: 100%; font-size: 14px; }
+
+    /* Member items */
+    .member-item { padding: 14px 12px; gap: 12px; }
+    .member-avatar { width: 40px; height: 40px; font-size: 20px; }
+
+    /* Modal — bottom sheet style */
     .modal-overlay { align-items: flex-end; padding: 0; }
     .modal {
         border-radius: 20px 20px 0 0;
@@ -2355,15 +2425,16 @@ mark {
     }
     .modal h3 { font-size: 17px; }
     .modal p { font-size: 15px; }
-    .modal-actions .btn { padding: 14px; font-size: 16px; min-height: 50px; }
+    .modal-actions { flex-direction: column; gap: 8px; }
+    .modal-actions .btn { padding: 14px; font-size: 16px; min-height: 50px; width: 100%; }
 
     @keyframes modalSlideUp {
         from { opacity: 0; transform: translateY(100%); }
         to { opacity: 1; transform: translateY(0); }
     }
 
-    /* Forms — prevent iOS zoom */
-    .input, .form-input, .form-textarea, select.input {
+    /* Forms — prevent iOS zoom (16px+ prevents auto-zoom) */
+    .input, .form-input, .form-textarea, select.input, textarea {
         font-size: 16px !important;
         padding: 14px 16px;
         border-radius: 12px;
@@ -2375,11 +2446,23 @@ mark {
     .stat { padding: 12px; }
     .stat-value { font-size: 20px; }
 
-    /* Breadcrumb */
-    .breadcrumb { font-size: 12px; gap: 4px; }
+    /* Breadcrumb — truncated */
+    .breadcrumb {
+        font-size: 12px;
+        gap: 4px;
+        overflow: hidden;
+        flex-wrap: nowrap;
+        max-width: calc(100vw - 80px);
+    }
+    .breadcrumb span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 140px;
+    }
     .project-badge { padding: 3px 10px; font-size: 11px; }
 
-    /* Glossary mobile */
+    /* Glossary mobile — stacked layout */
     .term-row {
         grid-template-columns: 36px 1fr;
         gap: 10px;
@@ -2410,18 +2493,19 @@ mark {
         font-size: 16px !important;
     }
 
-    /* Toast mobile */
+    /* Toast mobile — full-width */
     .toast-container { left: 16px; right: 16px; max-width: none; }
+    .toast { padding: 14px 16px; font-size: 14px; }
 
     /* Chat mobile */
     .chat-container { height: calc(100dvh - 180px); }
 
     /* Tier cards stack on mobile */
-    .tier-selector { flex-direction: column; }
+    .tier-selector { flex-direction: column; gap: 10px; }
     .tier-card { padding: 16px; }
 
-    /* File viewer mobile */
-    .file-viewer-modal { max-width: 100vw; width: 100%; }
+    /* File viewer mobile — fullscreen */
+    .file-viewer-modal { max-width: 100vw; width: 100%; border-radius: 0; }
     .file-text-content { font-size: 14px; line-height: 1.6; }
     .fv-heading { font-size: 15px; }
     .doc-html h1 { font-size: 1.3em; }
@@ -2447,15 +2531,36 @@ mark {
     .docx-native-wrapper img { max-width: 100% !important; height: auto !important; }
     .docx-native-wrapper p, .docx-native-wrapper span { max-width: 100% !important; word-wrap: break-word; }
 
-    /* Tooltip mobile — always bottom */
+    /* Tooltip mobile */
     [data-tooltip]::after { font-size: 12px; max-width: 200px; white-space: normal; padding: 8px 12px; }
 
-    /* Wizard mobile — full screen */
+    /* Wizard mobile — fullscreen */
+    .wizard-container { border-radius: 0; }
+    .wizard-header { padding: 14px 16px; }
     .wizard-step { padding: 16px; }
+    .wizard-step h2 { font-size: 19px; }
     .wizard-choice { flex-direction: column; }
     .wizard-choice-card { padding: 18px 16px; }
+    .wizard-progress { padding: 12px 16px; }
+    .wizard-dot-line { width: 20px; }
     .wizard-footer { padding: 12px 16px; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
     .wizard-footer .btn { min-width: auto; flex: 1; }
+
+    /* Drop zone on mobile */
+    .drop-zone { padding: 32px 16px; min-height: 140px; }
+
+    /* Empty states */
+    .empty-state { padding: 40px 20px; }
+    .empty-state-icon .icon { width: 40px; height: 40px; }
+    .empty-state-title { font-size: 16px; }
+
+    /* Bottom sheet (more menu) — larger touch targets */
+    .more-sheet { padding: 16px 12px; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+    .more-sheet-item { padding: 16px 14px; min-height: 52px; font-size: 16px; gap: 16px; }
+    .more-sheet-item .icon { width: 24px; height: 24px; }
+
+    /* Footer — compact on mobile */
+    footer { padding: 10px 0 !important; font-size: 11px !important; }
 }
 
 /* ═══════════ TABLET (600-959px) ═══════════ */
