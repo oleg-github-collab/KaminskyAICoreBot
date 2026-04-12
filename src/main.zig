@@ -145,6 +145,10 @@ pub fn main() !void {
     router.get("/app/components/inbox.js", serveInboxJS, .{});
     router.get("/app/components/instructions.js", serveInstructionsJS, .{});
     router.get("/app/components/workflow-bar.js", serveWorkflowBarJS, .{});
+    router.get("/app/lib/icons.js", serveIconsJS, .{});
+    router.get("/app/lib/transitions.js", serveTransitionsJS, .{});
+    router.get("/app/components/sidebar.js", serveSidebarJS, .{});
+    router.get("/app/components/upload-wizard.js", serveUploadWizardJS, .{});
 
     // REST API for Mini App
     router.get("/api/health", handler.handleHealth, .{});
@@ -370,4 +374,24 @@ fn serveWorkflowBarJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
     res.body = @embedFile("web/components/workflow-bar.js");
+}
+fn serveIconsJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/lib/icons.js");
+}
+fn serveTransitionsJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/lib/transitions.js");
+}
+fn serveSidebarJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/sidebar.js");
+}
+fn serveUploadWizardJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/upload-wizard.js");
 }

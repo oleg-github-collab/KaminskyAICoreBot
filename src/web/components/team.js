@@ -1,20 +1,19 @@
 const TeamView = {
     async render(c, project) {
         if (!project) {
-            c.innerHTML = '<div class="empty"><div class="empty-icon">\ud83d\udc65</div><p>Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
+            c.innerHTML = '<div class="empty-state"><div class="empty-state-icon">' + Icons.wrap('team', 48) + '</div><p class="empty-state-title">Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
             return;
         }
         c.innerHTML = `
             <div class="section-header">
-                <button class="back-btn" onclick="App.backToProjects()">\u2190</button>
                 <h2>${App.esc(project.name)} \u2014 Команда</h2>
             </div>
             <div class="invite-card">
                 <div class="card-title" style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-                    <span>\ud83d\udd17</span> Запросити учасника
+                    ${Icons.wrap('link', 18)} Запросити учасника
                 </div>
                 <div id="invite-area">
-                    <button class="btn btn-primary" onclick="TeamView.generateLink(${project.id})">\ud83d\udd17 Отримати посилання</button>
+                    <button class="btn btn-primary" onclick="TeamView.generateLink(${project.id})">${Icons.wrap('link', 16)} Отримати посилання</button>
                 </div>
             </div>
             <div id="team-list"><div class="loading">Завантаження...</div></div>`;

@@ -1,12 +1,11 @@
 const GlossaryVersionsView = {
     async render(c, project) {
         if (!project) {
-            c.innerHTML = '<div class="empty"><div class="empty-icon">📊</div><p>Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
+            c.innerHTML = '<div class="empty-state"><div class="empty-state-icon">' + Icons.wrap('versions', 48) + '</div><p class="empty-state-title">Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
             return;
         }
         c.innerHTML = `
             <div class="section-header">
-                <button class="back-btn" onclick="App.backToProjects()">←</button>
                 <h2>${App.esc(project.name)} — Версії глосарію</h2>
             </div>
             <div id="versions-list"><div class="loading">Завантаження...</div></div>

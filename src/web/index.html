@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#13141b">
+    <meta name="color-scheme" content="dark">
     <title>KI Beratung</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <!-- Quill Rich Text Editor -->
@@ -14,28 +16,49 @@
 </head>
 <body>
     <div id="app">
-        <header id="header">
-            <div class="header-content">
-                <div class="header-left">
-                    <h1 id="app-title">KI Beratung</h1>
-                    <div id="breadcrumb" class="breadcrumb"></div>
+        <!-- Sidebar (desktop) — built dynamically by sidebar.js -->
+        <aside id="sidebar"></aside>
+
+        <!-- Main content area -->
+        <div id="main">
+            <header id="header">
+                <div class="header-content">
+                    <div class="header-left">
+                        <button class="btn-icon" id="mobile-menu-btn" style="display:none" onclick="SidebarView.toggle()">
+                            <span class="icon" id="menu-icon"></span>
+                        </button>
+                        <h1 id="app-title">KI Beratung</h1>
+                        <div id="breadcrumb" class="breadcrumb"></div>
+                    </div>
+                    <div class="header-right">
+                        <div id="project-info" class="project-info"></div>
+                    </div>
                 </div>
-                <div class="header-right">
-                    <div id="project-info" class="project-info"></div>
-                </div>
-            </div>
-            <nav id="nav"></nav>
-        </header>
-        <main id="content">
-            <div class="loading">Завантаження...</div>
-        </main>
-        <footer style="text-align:center;padding:12px 0;font-size:12px;color:var(--hint)">
-            <a href="https://kaminskyi.chat" target="_blank" style="color:var(--hint);text-decoration:none">kaminskyi.chat</a> — KI Beratung
-        </footer>
+                <!-- Legacy nav — hidden by CSS, kept for compatibility -->
+                <nav id="nav"></nav>
+            </header>
+            <main id="content">
+                <div class="loading">Завантаження...</div>
+            </main>
+            <footer style="text-align:center;padding:16px 0;font-size:12px;color:var(--text-muted)">
+                <a href="https://kaminskyi.chat" target="_blank" style="color:var(--text-muted);text-decoration:none">kaminskyi.chat</a> — KI Beratung
+            </footer>
+        </div>
+
+        <!-- Bottom nav (mobile) — built dynamically by app.js -->
+        <nav id="bottom-nav"></nav>
+
+        <!-- FAB button — shown when in project context -->
+        <button class="fab" id="fab-upload" style="display:none" onclick="UploadWizard.open()">
+            <span class="icon" id="fab-icon"></span>
+        </button>
     </div>
+
     <!-- Core Libraries -->
     <script src="/app/lib/auth.js"></script>
     <script src="/app/lib/roles.js"></script>
+    <script src="/app/lib/icons.js"></script>
+    <script src="/app/lib/transitions.js"></script>
     <script src="/app/lib/dragdrop.js"></script>
     <script src="/app/lib/diff-viewer.js"></script>
     <script src="/app/lib/file-stats.js"></script>
@@ -45,6 +68,8 @@
     <script src="/app/lib/api-client.js"></script>
 
     <!-- View Components -->
+    <script src="/app/components/sidebar.js"></script>
+    <script src="/app/components/upload-wizard.js"></script>
     <script src="/app/components/projects.js"></script>
     <script src="/app/components/files.js"></script>
     <script src="/app/components/file-viewer.js"></script>

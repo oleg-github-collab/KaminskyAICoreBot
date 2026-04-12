@@ -8,7 +8,7 @@ const ProjectsView = {
             let html = `<div class="section-header">
                 <h2>Мої проєкти</h2>
                 <div class="section-actions">
-                    <span style="font-size:12px;color:var(--hint)">${projects.length} проєкт${projects.length === 1 ? '' : 'ів'}</span>
+                    <span style="font-size:12px;color:var(--text-secondary)">${projects.length} проєкт${projects.length === 1 ? '' : 'ів'}</span>
                 </div>
             </div>`;
 
@@ -23,10 +23,10 @@ const ProjectsView = {
 
             if (!projects.length) {
                 html += `
-                    <div class="empty">
-                        <div class="empty-icon">📁</div>
-                        <p>Ще немає проєктів</p>
-                        <p style="font-size:13px;margin-top:8px;color:var(--hint)">Створіть перший проєкт вище</p>
+                    <div class="empty-state">
+                        <div class="empty-state-icon">${Icons.wrap('projects', 48)}</div>
+                        <p class="empty-state-title">Ще немає проєктів</p>
+                        <p class="empty-state-text">Створіть перший проєкт в��ще</p>
                     </div>`;
             } else {
                 html += projects.map(p => {
@@ -43,9 +43,9 @@ const ProjectsView = {
                         ${p.role === 'owner' ? `
                         <div class="project-card-actions" onclick="event.stopPropagation()">
                             <button class="btn btn-sm btn-secondary"
-                                    onclick="ProjectsView.editProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}', '${App.esc(p.description || '').replace(/'/g, "\\'")}')">\u270f\ufe0f Редагувати</button>
+                                    onclick="ProjectsView.editProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}', '${App.esc(p.description || '').replace(/'/g, "\\'")}')">${Icons.wrap('edit', 14)} Редагувати</button>
                             <button class="btn btn-sm btn-danger"
-                                    onclick="ProjectsView.deleteProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}')">\u2715 Видалити</button>
+                                    onclick="ProjectsView.deleteProject(${p.id}, '${App.esc(p.name).replace(/'/g, "\\'")}')">${Icons.wrap('trash', 14)} Видалити</button>
                         </div>` : ''}
                     </div>`;
                 }).join('');
