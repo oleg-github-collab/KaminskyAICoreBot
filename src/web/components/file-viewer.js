@@ -641,52 +641,81 @@ const FileViewer = {
     },
 
     // Selection handler — shows 3-button toolbar on text selection
-    // Tracks cursor position for reliable placement with large selections
+    // Uses getClientRects for precise last-line placement, dismisses on scroll
     attachSelectionHandler(container) {
         if (!container) return;
         if (this._selectionCleanup) this._selectionCleanup();
 
         const textEl = container.querySelector('.file-text-content') || container;
         let lastPtr = { x: 0, y: 0 };
+        let toolbarTimeout = null;
+
+        const removeToolbar = () => {
+            document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
+            if (toolbarTimeout) { clearTimeout(toolbarTimeout); toolbarTimeout = null; }
+        };
 
         const showToolbar = () => {
-            document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
+            removeToolbar();
 
             const selection = window.getSelection();
-            const selectedText = (selection || '').toString().trim();
-            if (!selectedText || selectedText.length === 0) return;
+            if (!selection || selection.rangeCount === 0) return;
+            const selectedText = selection.toString().trim();
+            if (!selectedText) return;
 
             let range;
             try { range = selection.getRangeAt(0); } catch(e) { return; }
+
+            // Ensure selection is within our text area
+            if (!textEl.contains(range.commonAncestorContainer)) return;
+
             const offsets = this.calculateOffsets(range, textEl);
 
-            // Position: use viewport-relative coords (fixed positioning)
-            // getBoundingClientRect() returns viewport coords — no scroll offset needed
-            const rect = range.getBoundingClientRect();
+            // Position: use selection rects for accurate placement
+            const rects = range.getClientRects();
+            const lastRect = rects.length > 0 ? rects[rects.length - 1] : range.getBoundingClientRect();
             let top, left;
 
-            if (rect && rect.height > 0 && rect.height < window.innerHeight * 0.7 && rect.bottom > 0) {
-                top = rect.bottom + 6;
-                left = rect.left;
+            if (lastRect && lastRect.height > 0 && lastRect.bottom > 0 && lastRect.bottom < window.innerHeight) {
+                top = lastRect.bottom + 8;
+                left = lastRect.left;
             } else {
-                // Large selection or off-screen rect — use last known cursor position
-                top = lastPtr.y + 12;
-                left = lastPtr.x - 80;
+                top = lastPtr.y + 14;
+                left = lastPtr.x - 100;
             }
 
+            // On mobile: full-width toolbar near bottom
+            const isMobile = window.innerWidth <= 767;
+            if (isMobile) { left = 16; }
+
             // Clamp within viewport
-            left = Math.max(8, Math.min(left, window.innerWidth - 300));
-            top = Math.min(top, window.innerHeight - 60);
+            left = Math.max(8, Math.min(left, window.innerWidth - 320));
+            top = Math.max(8, Math.min(top, window.innerHeight - 70));
+
+            // If toolbar overlaps selection, place above
+            const firstRect = rects.length > 0 ? rects[0] : lastRect;
+            if (firstRect && top > firstRect.top - 60 && top < firstRect.bottom + 8) {
+                const above = firstRect.top - 56;
+                if (above > 8) top = above;
+            }
 
             const toolbar = document.createElement('div');
             toolbar.className = 'selection-toolbar';
             toolbar.style.position = 'fixed';
             toolbar.style.top = top + 'px';
             toolbar.style.left = left + 'px';
+            if (isMobile) {
+                toolbar.style.right = '16px';
+                toolbar.style.left = '16px';
+                toolbar.style.width = 'auto';
+            }
             toolbar.innerHTML =
                 '<button onclick="FileViewer.startComment()" title="Додати коментар">&#128172; Коментар</button>' +
                 '<button onclick="FileViewer.startSuggestion()" title="Запропонувати зміну">&#9998; Пропозиція</button>' +
                 '<button onclick="FileViewer.copyQuote()" title="Скопіювати цитату">&#128203; Копіювати</button>';
+
+            // Prevent toolbar click from clearing selection
+            toolbar.addEventListener('mousedown', (e) => e.preventDefault());
             document.body.appendChild(toolbar);
 
             this._pendingSelection = {
@@ -695,7 +724,7 @@ const FileViewer = {
                 end_offset: offsets.end
             };
 
-            setTimeout(() => { if (toolbar.parentNode) toolbar.remove(); }, 15000);
+            toolbarTimeout = setTimeout(() => { if (toolbar.parentNode) toolbar.remove(); }, 20000);
         };
 
         const onPointerMove = (e) => {
@@ -705,19 +734,19 @@ const FileViewer = {
             const t = e.touches[0];
             if (t) lastPtr = { x: t.clientX, y: t.clientY };
         };
-        const onMouseUp = () => { setTimeout(showToolbar, 30); };
-        const onTouchEnd = () => { setTimeout(showToolbar, 250); };
+        const onMouseUp = () => { setTimeout(showToolbar, 50); };
+        const onTouchEnd = () => { setTimeout(showToolbar, 350); };
         const onMouseDown = (e) => {
-            if (!e.target.closest('.selection-toolbar')) {
-                document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
-            }
+            if (!e.target.closest('.selection-toolbar')) removeToolbar();
         };
+        const onScroll = () => removeToolbar();
 
         textEl.addEventListener('mousemove', onPointerMove);
         textEl.addEventListener('touchmove', onTouchMove, { passive: true });
         textEl.addEventListener('mouseup', onMouseUp);
         textEl.addEventListener('touchend', onTouchEnd);
         document.addEventListener('mousedown', onMouseDown);
+        container.addEventListener('scroll', onScroll, { passive: true });
 
         this._selectionCleanup = () => {
             textEl.removeEventListener('mousemove', onPointerMove);
@@ -725,13 +754,15 @@ const FileViewer = {
             textEl.removeEventListener('mouseup', onMouseUp);
             textEl.removeEventListener('touchend', onTouchEnd);
             document.removeEventListener('mousedown', onMouseDown);
+            container.removeEventListener('scroll', onScroll);
+            removeToolbar();
         };
     },
 
     calculateOffsets(range, container) {
         const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
         let charCount = 0, startOffset = 0, endOffset = 0;
-        let foundStart = false;
+        let foundStart = false, foundEnd = false;
 
         while (walker.nextNode()) {
             const node = walker.currentNode;
@@ -741,12 +772,14 @@ const FileViewer = {
             }
             if (node === range.endContainer) {
                 endOffset = charCount + range.endOffset;
+                foundEnd = true;
                 break;
             }
             charCount += node.textContent.length;
         }
 
         if (!foundStart) startOffset = 0;
+        if (!foundEnd) endOffset = startOffset + range.toString().length;
         return { start: startOffset, end: endOffset };
     },
 
@@ -760,10 +793,11 @@ const FileViewer = {
             quoted_text: this._pendingSelection.text
         });
 
-        const editorEl = document.querySelector('.sidebar-editor .ql-editor') || document.getElementById('comment-editor');
+        // Focus the comment editor in sidebar
+        const editorEl = document.querySelector('.cv-editor-wrap .ql-editor') || document.getElementById('comment-editor');
         if (editorEl) {
             editorEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            if (CommentsView.quill) CommentsView.quill.focus();
+            setTimeout(() => { if (CommentsView.quill) CommentsView.quill.focus(); }, 300);
         }
     },
 
@@ -776,6 +810,10 @@ const FileViewer = {
             end_offset: this._pendingSelection.end_offset,
             quoted_text: this._pendingSelection.text
         });
+
+        // Scroll to suggestion form
+        const form = document.querySelector('.cv-suggestion-form');
+        if (form) form.scrollIntoView({ behavior: 'smooth', block: 'center' });
     },
 
     copyQuote() {
