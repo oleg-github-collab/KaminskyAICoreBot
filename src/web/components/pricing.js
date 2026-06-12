@@ -131,7 +131,6 @@ const PricingView = {
 
     renderLanguagePanel(source, targets, disabled) {
         const availableTargets = this.availableTargetLanguages(source, targets);
-        const nextTarget = availableTargets[0] || '';
         return `
             <div class="order-panel">
                 <div class="order-panel-head">
@@ -147,30 +146,30 @@ const PricingView = {
                             ${this.renderLanguageOptions(source)}
                         </select>
                     </label>
-                    <label class="field-label">
-                        Додати ще одну мову перекладу
-                        <div class="target-add-row">
-                            <select class="input" id="order-target-add" ${disabled || !availableTargets.length ? 'disabled' : ''}>
-                                ${availableTargets.length ? this.renderLanguageOptions(nextTarget, availableTargets) : '<option>Усі доступні мови вже додані</option>'}
-                            </select>
-                            <button class="btn btn-secondary" ${disabled || !availableTargets.length ? 'disabled' : ''} onclick="PricingView.addTargetLanguage()">
-                                ${Icons.wrap('plus', 16)}
-                                <span class="target-add-text">Додати мову</span>
-                            </button>
-                        </div>
-                    </label>
                 </div>
-                <div class="language-route-card">
-                    <div class="language-route-source">
-                        <span class="language-route-label">Оригінал</span>
-                        <span class="language-route-pill">${this.renderLanguageFace(source)}</span>
-                    </div>
-                    <div class="language-route-arrow">→</div>
-                    <div class="language-route-targets">
-                        <span class="language-route-label">Додані мови перекладу</span>
-                        <div class="target-chip-row">
-                            ${targets.map(lang => this.renderTargetChip(lang, targets, disabled)).join('')}
+                <div class="language-selected-block">
+                    <div class="language-selected-head">
+                        <div>
+                            <span class="language-route-label">Вибрані мови перекладу</span>
+                            <div class="language-selected-note">${targets.length} ${this.languageCountWord(targets.length)} у цьому замовленні</div>
                         </div>
+                        <button class="btn btn-secondary" ${disabled || !availableTargets.length ? 'disabled' : ''} onclick="PricingView.openAddLanguageModal()">
+                            ${Icons.wrap('plus', 16)}
+                            <span class="target-add-text">Додати мову</span>
+                        </button>
+                    </div>
+                    <div class="target-chip-row selected-languages-row">
+                        ${targets.map(lang => this.renderTargetChip(lang, targets, disabled)).join('')}
+                    </div>
+                </div>
+                <div class="language-route-card compact">
+                    <span class="language-route-label">Маршрут</span>
+                    <div class="language-route-inline">
+                        <span class="language-route-pill">${this.renderLanguageFace(source)}</span>
+                        <span class="language-route-arrow-inline">→</span>
+                        <span class="language-route-target-stack">
+                            ${targets.map(lang => `<span class="language-route-pill">${this.renderLanguageFace(lang)}</span>`).join('')}
+                        </span>
                     </div>
                 </div>
                 <div class="order-actions">
@@ -520,6 +519,18 @@ const PricingView = {
         return this.orderLanguages.filter(lang => lang !== source && !selected.has(lang));
     },
 
+    renderLanguageOptionButton(lang) {
+        const info = this.languageInfo(lang);
+        const searchable = [lang, info.name, info.nativeName, info.flag].join(' ').toLowerCase();
+        return `
+            <button type="button" class="language-option-button" data-search="${App.esc(searchable)}" onclick="PricingView.addTargetLanguage('${this.inlineArg(lang)}', this)">
+                <span class="language-option-face">
+                    ${this.renderLanguageFace(lang)}
+                </span>
+                <span class="language-option-plus">${Icons.wrap('plus', 15)}</span>
+            </button>`;
+    },
+
     targetLanguages(raw) {
         const list = String(raw || '').split(',').map(s => s.trim()).filter(Boolean);
         return list.length ? list : ['Ukrainian'];
@@ -528,6 +539,15 @@ const PricingView = {
     currentTargets() {
         const raw = App.currentProject?.target_lang || this.pricingData?.pricing?.target_lang || 'Ukrainian';
         return this.targetLanguages(raw);
+    },
+
+    languageCountWord(count) {
+        const n = Math.abs(Number(count) || 0);
+        const last = n % 10;
+        const lastTwo = n % 100;
+        if (last === 1 && lastTwo !== 11) return 'мова';
+        if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) return 'мови';
+        return 'мов';
     },
 
     async loadOptions() {
@@ -540,6 +560,71 @@ const PricingView = {
         } catch (e) {
             this.orderLanguages = ORDER_LANGUAGES;
         }
+    },
+
+    openAddLanguageModal() {
+        if (!App.currentProject) return;
+        const source = document.getElementById('order-source-lang')?.value || App.currentProject.source_lang || 'German';
+        const targets = this.currentTargets();
+        const available = this.availableTargetLanguages(source, targets);
+        if (!available.length) {
+            App.toast('Усі доступні мови вже додані', 'info');
+            return;
+        }
+
+        document.getElementById('pricing-language-modal')?.remove();
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.id = 'pricing-language-modal';
+        overlay.innerHTML = `
+            <div class="modal language-add-modal" role="dialog" aria-modal="true" aria-labelledby="language-add-title">
+                <h3 id="language-add-title">${Icons.wrap('globe', 20)} Додати мову перекладу</h3>
+                <div class="language-modal-current">
+                    <span class="language-route-label">Оригінал</span>
+                    <span class="language-route-pill">${this.renderLanguageFace(source)}</span>
+                </div>
+                <input id="language-modal-search" class="input language-modal-search" autocomplete="off" placeholder="Знайти мову" oninput="PricingView.filterAddLanguageModal(this.value)">
+                <div id="language-modal-list" class="language-option-list">
+                    ${available.map(lang => this.renderLanguageOptionButton(lang)).join('')}
+                </div>
+                <div id="language-modal-empty" class="language-modal-empty" hidden>Такої мови в списку немає</div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="PricingView.closeAddLanguageModal()">Закрити</button>
+                </div>
+            </div>`;
+
+        const escHandler = (e) => {
+            if (e.key === 'Escape') this.closeAddLanguageModal();
+        };
+        overlay._escHandler = escHandler;
+        document.addEventListener('keydown', escHandler);
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) this.closeAddLanguageModal();
+        });
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.classList.add('visible'));
+        setTimeout(() => document.getElementById('language-modal-search')?.focus(), 60);
+    },
+
+    closeAddLanguageModal() {
+        const overlay = document.getElementById('pricing-language-modal');
+        if (!overlay) return;
+        if (overlay._escHandler) document.removeEventListener('keydown', overlay._escHandler);
+        overlay.remove();
+    },
+
+    filterAddLanguageModal(value) {
+        const q = String(value || '').trim().toLowerCase();
+        const buttons = Array.from(document.querySelectorAll('#language-modal-list .language-option-button'));
+        let visible = 0;
+        for (const btn of buttons) {
+            const haystack = btn.dataset.search || '';
+            const match = !q || haystack.includes(q);
+            btn.hidden = !match;
+            if (match) visible++;
+        }
+        const empty = document.getElementById('language-modal-empty');
+        if (empty) empty.hidden = visible > 0;
     },
 
     goStep(step) {
@@ -558,17 +643,24 @@ const PricingView = {
         await this.persistLanguages(source, targets);
     },
 
-    async addTargetLanguage() {
+    async addTargetLanguage(lang = null, btn = null) {
         if (!App.currentProject) return;
         const source = document.getElementById('order-source-lang')?.value || App.currentProject.source_lang || 'German';
-        const next = document.getElementById('order-target-add')?.value;
+        const next = lang;
         if (!next || next === source) {
             App.toast('Оберіть іншу мову перекладу', 'warning');
             return;
         }
         const targets = this.currentTargets();
         if (!targets.includes(next)) targets.push(next);
-        await this.persistLanguages(source, targets);
+        if (btn) btn.disabled = true;
+        const saved = await this.persistLanguages(source, targets);
+        if (saved) {
+            this.closeAddLanguageModal();
+            App.toast('Мову додано', 'success');
+        } else if (btn) {
+            btn.disabled = false;
+        }
     },
 
     async removeTargetLanguage(lang) {
@@ -585,9 +677,11 @@ const PricingView = {
             await API.updateProject(App.currentProject.id, { source_lang: source, target_lang: targetLang });
             App.currentProject.source_lang = source;
             App.currentProject.target_lang = targetLang;
-            this.loadPricing(App.currentProject.id);
+            await this.loadPricing(App.currentProject.id);
+            return true;
         } catch (e) {
             App.toast(e.message, 'error');
+            return false;
         }
     },
 
