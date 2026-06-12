@@ -533,9 +533,11 @@ fn stripXmlTags(allocator: std.mem.Allocator, xml: []const u8) ![]const u8 {
     while (i < xml.len) {
         const b = xml[i];
         if (b == '<') {
-            // Check for paragraph/break tags → add newline
-            if (i + 4 < xml.len) {
-                const ahead = xml[i..@min(i + 20, xml.len)];
+            // Check for paragraph/break tags → add newline.
+            // Bounded lookahead: never read past the end of the buffer.
+            const lookahead_len = @min(@as(usize, 20), xml.len - i);
+            if (lookahead_len > 0) {
+                const ahead = xml[i .. i + lookahead_len];
                 if (std.mem.startsWith(u8, ahead, "<w:p ") or
                     std.mem.startsWith(u8, ahead, "<w:p>") or
                     std.mem.startsWith(u8, ahead, "<w:p/>") or
@@ -638,60 +640,6 @@ fn stripXmlTags(allocator: std.mem.Allocator, xml: []const u8) ![]const u8 {
     return try result.toOwnedSlice();
 }
 
-/// Translate text via Python processor → Ultra (O.Translator).
-pub fn translateTextUltra(
-    allocator: std.mem.Allocator,
-    config: *const config_mod.Config,
-    texts: []const []const u8,
-    source_lang: []const u8,
-    target_lang: []const u8,
-    description: []const u8,
-) ![]const u8 {
-    const processor_url = config.processor_url;
-    if (processor_url.len == 0) return error.ProcessorNotConfigured;
-
-    var url_buf: [512]u8 = undefined;
-    const url = try std.fmt.bufPrint(&url_buf, "{s}/ultra/translate-text", .{processor_url});
-
-    const body = try std.json.stringifyAlloc(allocator, .{
-        .texts = texts,
-        .from_lang = source_lang,
-        .to_lang = target_lang,
-        .description = description,
-    }, .{});
-    defer allocator.free(body);
-
-    const auth_header = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key});
-    defer allocator.free(auth_header);
-
-    const result = try std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &[_][]const u8{
-            "curl", "-s", "-f",
-            "--connect-timeout", "10",
-            "--max-time", "300",
-            "-X", "POST",
-            "-H", "Content-Type: application/json",
-            "-H", auth_header,
-            "-d", body,
-            url,
-        },
-    });
-    defer allocator.free(result.stderr);
-
-    const ok = switch (result.term) {
-        .Exited => |code| code == 0,
-        else => false,
-    };
-    if (!ok) {
-        allocator.free(result.stdout);
-        std.log.err("Processor /ultra/translate-text failed, stderr: {s}", .{result.stderr});
-        return error.ProcessorCallFailed;
-    }
-
-    return result.stdout;
-}
-
 /// Translate document via Python processor → Ultra (O.Translator).
 /// Returns raw JSON response with base64-encoded translated file.
 pub fn translateDocumentUltra(
@@ -703,6 +651,7 @@ pub fn translateDocumentUltra(
     target_lang: []const u8,
     glossary_name: []const u8,
     description: []const u8,
+    model: []const u8,
 ) ![]const u8 {
     const processor_url = config.processor_url;
     if (processor_url.len == 0) return error.ProcessorNotConfigured;
@@ -714,21 +663,27 @@ pub fn translateDocumentUltra(
     defer allocator.free(auth_header);
     const file_arg = try std.fmt.allocPrint(allocator, "file=@{s};filename={s}", .{ file_path, original_name });
     defer allocator.free(file_arg);
-    const from_arg = try std.fmt.allocPrint(allocator, "from_lang={s}", .{source_lang});
+    const from_arg = try std.fmt.allocPrint(allocator, "source_lang={s}", .{source_lang});
     defer allocator.free(from_arg);
-    const to_arg = try std.fmt.allocPrint(allocator, "to_lang={s}", .{target_lang});
+    const to_arg = try std.fmt.allocPrint(allocator, "target_lang={s}", .{target_lang});
     defer allocator.free(to_arg);
     const glossary_arg = try std.fmt.allocPrint(allocator, "glossary_name={s}", .{glossary_name});
     defer allocator.free(glossary_arg);
     const desc_arg = try std.fmt.allocPrint(allocator, "description={s}", .{description});
     defer allocator.free(desc_arg);
+    const model_arg = try std.fmt.allocPrint(allocator, "model={s}", .{model});
+    defer allocator.free(model_arg);
 
+    // Keep curl's --max-time slightly BELOW the Python poll budget (OTRANSLATOR_MAX_POLL_TIME,
+    // default 900s) so the Zig side times out predictably and the caller can mark the job
+    // 'external_timeout_pending' (preserving the external task id for later recovery) instead
+    // of hanging for the provider's full budget + download.
     const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{
-            "curl", "-s", "-f",
+            "curl", "-s",
             "--connect-timeout", "10",
-            "--max-time", "600",
+            "--max-time", "840",
             "-X", "POST",
             "-H", auth_header,
             "-F", file_arg,
@@ -736,8 +691,111 @@ pub fn translateDocumentUltra(
             "-F", to_arg,
             "-F", glossary_arg,
             "-F", desc_arg,
+            "-F", model_arg,
+            "-F", "should_translate_image=true",
+            "-F", "should_translate_file_name=true",
+            "-w", "\n%{http_code}",
             url,
         },
+        .max_output_bytes = 80 * 1024 * 1024,
+    });
+    defer allocator.free(result.stderr);
+
+    // curl exit code 28 == operation timeout (hit --max-time). Surface it distinctly so the
+    // caller can mark the job 'external_timeout_pending' (the provider task may still finish).
+    const curl_timed_out = switch (result.term) {
+        .Exited => |code| code == 28,
+        else => false,
+    };
+    if (curl_timed_out) {
+        allocator.free(result.stdout);
+        std.log.warn("Processor /ultra/translate-document timed out (curl --max-time), stderr: {s}", .{result.stderr});
+        return error.OTranslatorTimeout;
+    }
+
+    const ok = switch (result.term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    if (!ok) {
+        allocator.free(result.stdout);
+        std.log.err("Processor /ultra/translate-document failed, stderr: {s}", .{result.stderr});
+        return error.ProcessorCallFailed;
+    }
+
+    if (result.stdout.len < 4) {
+        allocator.free(result.stdout);
+        return error.InvalidProcessorResponse;
+    }
+
+    const status_start = result.stdout.len - 3;
+    const status = std.fmt.parseInt(i64, result.stdout[status_start..], 10) catch {
+        allocator.free(result.stdout);
+        return error.InvalidProcessorResponse;
+    };
+    const body_end = if (status_start > 0 and result.stdout[status_start - 1] == '\n') status_start - 1 else status_start;
+    const response_body = result.stdout[0..body_end];
+
+    if (status >= 400) {
+        std.log.err("Processor /ultra/translate-document HTTP {d}: {s}", .{
+            status,
+            response_body[0..@min(response_body.len, 1000)],
+        });
+        const lower = try asciiLowerAlloc(allocator, response_body);
+        defer allocator.free(lower);
+        allocator.free(result.stdout);
+        if (std.mem.indexOf(u8, lower, "balance") != null or
+            std.mem.indexOf(u8, lower, "credit") != null or
+            std.mem.indexOf(u8, lower, "insufficient") != null)
+        {
+            return error.OTranslatorInsufficientBalance;
+        }
+        if (std.mem.indexOf(u8, lower, "configured translation model") != null or
+            (std.mem.indexOf(u8, lower, "model") != null and
+                (std.mem.indexOf(u8, lower, "not available") != null or
+                    std.mem.indexOf(u8, lower, "unavailable") != null)))
+        {
+            return error.OTranslatorInvalidModel;
+        }
+        return error.ProcessorCallFailed;
+    }
+
+    const owned = try allocator.dupe(u8, response_body);
+    allocator.free(result.stdout);
+    return owned;
+}
+
+fn asciiLowerAlloc(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+    const out = try allocator.alloc(u8, input.len);
+    for (input, 0..) |ch, i| {
+        out[i] = if (ch >= 'A' and ch <= 'Z') ch + 32 else ch;
+    }
+    return out;
+}
+
+pub fn fetchJsonEndpoint(
+    allocator: std.mem.Allocator,
+    config: *const config_mod.Config,
+    endpoint: []const u8,
+) ![]const u8 {
+    const processor_url = config.processor_url;
+    if (processor_url.len == 0) return error.ProcessorNotConfigured;
+
+    var url_buf: [512]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "{s}{s}", .{ processor_url, endpoint });
+    const auth_header = try std.fmt.allocPrint(allocator, "Authorization: Bearer {s}", .{config.internal_api_key});
+    defer allocator.free(auth_header);
+
+    const result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{
+            "curl", "-s", "-f",
+            "--connect-timeout", "5",
+            "--max-time", "20",
+            "-H", auth_header,
+            url,
+        },
+        .max_output_bytes = 2 * 1024 * 1024,
     });
     defer allocator.free(result.stderr);
 
@@ -747,7 +805,7 @@ pub fn translateDocumentUltra(
     };
     if (!ok) {
         allocator.free(result.stdout);
-        std.log.err("Processor /ultra/translate-document failed, stderr: {s}", .{result.stderr});
+        std.log.warn("Processor endpoint {s} failed: {s}", .{ endpoint, result.stderr });
         return error.ProcessorCallFailed;
     }
 

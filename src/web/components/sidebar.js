@@ -7,18 +7,17 @@ const SidebarView = {
 
     /** Main navigation items (shown in sidebar + bottom nav) */
     navItems: [
-        { id: 'projects',     label: 'Проєкти',      icon: 'projects',     accent: 'blue' },
+        { id: 'projects',     label: 'Замовлення',    icon: 'projects',     accent: 'blue' },
+        { id: 'pricing',      label: 'Оплата',        icon: 'pricing',      accent: 'green' },
         { id: 'files',        label: 'Файли',         icon: 'files',        accent: 'pink' },
-        { id: 'glossary',     label: 'Глосарій',      icon: 'glossary',     accent: 'purple' },
-        { id: 'pricing',      label: 'Вартість',      icon: 'pricing',      accent: 'green' },
-        { id: 'versions',     label: 'Версії',        icon: 'versions',     accent: 'blue' },
+        { id: 'team',         label: 'Команда',       icon: 'team',         accent: 'cyan' },
     ],
 
     /** Secondary navigation items (sidebar only, mobile "more" menu) */
     secondaryItems: [
-        { id: 'instructions', label: 'Інструкції',    icon: 'instructions', accent: 'orange' },
-        { id: 'team',         label: 'Команда',        icon: 'team',         accent: 'cyan' },
-        { id: 'settings',     label: 'Налаштування',  icon: 'settings',     accent: 'orange' },
+        { id: 'guide', label: 'Інструкція', icon: 'info', accent: 'blue' },
+        { id: 'audit', label: 'Журнал', icon: 'clock', accent: 'orange' },
+        { id: 'admin', label: 'Адмін', icon: 'admin', accent: 'orange', adminOnly: true },
     ],
 
     /** Render the desktop sidebar */
@@ -27,13 +26,13 @@ const SidebarView = {
         if (!sidebar) return;
 
         const mainNav = this.navItems.map(item => this._navItem(item)).join('');
-        const secNav = this.secondaryItems.map(item => this._navItem(item)).join('');
+        const secNav = this._visibleSecondaryItems().map(item => this._navItem(item)).join('');
 
         sidebar.innerHTML = `
             <div class="sidebar-header">
                 <div class="sidebar-logo">
                     ${Icons.wrap('globe', 28)}
-                    <span>KI Beratung</span>
+                    <span>Перекладач</span>
                 </div>
             </div>
             <nav class="sidebar-nav">
@@ -68,18 +67,21 @@ const SidebarView = {
         const nav = document.getElementById('bottom-nav');
         if (!nav) return;
 
-        // 4 main items + "more" button
         const items = this.navItems.slice(0, 4);
+        const moreItems = [
+            ...this.navItems.slice(4),
+            ...this._visibleSecondaryItems()
+        ];
         nav.innerHTML = items.map(item => `
             <button class="bottom-nav-item${App.currentView === item.id ? ' active' : ''}" data-view="${item.id}">
                 ${Icons.wrap(item.icon, 22)}
                 <span>${item.label}</span>
             </button>
-        `).join('') + `
+        `).join('') + (moreItems.length ? `
             <button class="bottom-nav-item" id="bottom-nav-more">
                 ${Icons.wrap('more', 22)}
                 <span>Ще</span>
-            </button>`;
+            </button>` : '');
 
         nav.querySelectorAll('.bottom-nav-item[data-view]').forEach(el => {
             el.addEventListener('click', () => {
@@ -140,7 +142,7 @@ const SidebarView = {
         // Combine secondary + remaining main items
         const moreItems = [
             ...this.navItems.slice(4),
-            ...this.secondaryItems
+            ...this._visibleSecondaryItems()
         ];
 
         const overlay = document.createElement('div');
@@ -189,6 +191,10 @@ const SidebarView = {
             <span class="sidebar-icon">${Icons.wrap(item.icon, 20)}</span>
             <span class="sidebar-label">${item.label}</span>
         </button>`;
+    },
+
+    _visibleSecondaryItems() {
+        return this.secondaryItems.filter(item => !item.adminOnly || App.isAdmin);
     },
 
     /** Get or create mobile overlay */

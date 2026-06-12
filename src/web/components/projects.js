@@ -1,23 +1,85 @@
 const ProjectsView = {
+    languages: [
+        'German', 'Ukrainian', 'English', 'Polish', 'French', 'Spanish',
+        'Italian', 'Dutch', 'Czech', 'Slovak', 'Romanian', 'Russian'
+    ],
+    languageFlags: {
+        German: '🇩🇪',
+        Ukrainian: '🇺🇦',
+        English: '🇬🇧',
+        Polish: '🇵🇱',
+        French: '🇫🇷',
+        Spanish: '🇪🇸',
+        Italian: '🇮🇹',
+        Dutch: '🇳🇱',
+        Czech: '🇨🇿',
+        Slovak: '🇸🇰',
+        Romanian: '🇷🇴',
+        Russian: '🇷🇺',
+        Portuguese: '🇵🇹',
+        Swedish: '🇸🇪',
+        Danish: '🇩🇰',
+        Finnish: '🇫🇮',
+        Norwegian: '🇳🇴',
+        Turkish: '🇹🇷',
+        Greek: '🇬🇷',
+        Bulgarian: '🇧🇬',
+        Hungarian: '🇭🇺',
+        Estonian: '🇪🇪',
+        Latvian: '🇱🇻',
+        Lithuanian: '🇱🇹',
+        Slovenian: '🇸🇮',
+        Croatian: '🇭🇷',
+        Serbian: '🇷🇸',
+        Arabic: '🇸🇦',
+        Hebrew: '🇮🇱',
+        Japanese: '🇯🇵',
+        Korean: '🇰🇷',
+        Chinese: '🇨🇳',
+        'Simplified Chinese': '🇨🇳',
+        'Traditional Chinese': '🇹🇼',
+        Hindi: '🇮🇳',
+        Indonesian: '🇮🇩',
+        Vietnamese: '🇻🇳',
+        Thai: '🇹🇭'
+    },
+    optionsLoaded: false,
+
     async render(c) {
-        c.innerHTML = '<div class="loading">Завантаження...</div>';
+        c.innerHTML = '<div class="loading">Завантаження замовлень…</div>';
         try {
+            await this.loadOptions();
             const data = await API.getProjects();
             const projects = data.projects || [];
 
             let html = `<div class="section-header">
-                <h2>Мої проєкти</h2>
+                <h2>Мої замовлення</h2>
                 <div class="section-actions">
-                    <span style="font-size:12px;color:var(--text-secondary)">${projects.length} проєкт${projects.length === 1 ? '' : 'ів'}</span>
+                    <span style="font-size:12px;color:var(--text-secondary)">${projects.length} замовлень</span>
                 </div>
             </div>`;
 
             html += `
                 <div class="create-card">
-                    <div class="card-title">Створити новий проєкт</div>
+                    <div class="card-title">Нове замовлення</div>
                     <div class="create-row">
-                        <input class="input" id="new-project-name" placeholder="Наприклад: Договір EN\u2192UK" onkeydown="if(event.key==='Enter')ProjectsView.create()">
-                        <button class="btn btn-primary" onclick="ProjectsView.create()">Створити</button>
+                        <label class="field-label create-field">
+                            Назва замовлення
+                            <input class="input" id="new-project-name" placeholder="Наприклад: Договір" onkeydown="if(event.key==='Enter')ProjectsView.create()">
+                        </label>
+                        <label class="field-label create-field">
+                            Мова оригіналу
+                            <select class="input" id="new-project-source" aria-label="Мова оригіналу">
+                                ${this.renderLanguageOptions('German')}
+                            </select>
+                        </label>
+                        <label class="field-label create-field">
+                            Мова перекладу
+                            <select class="input" id="new-project-target" aria-label="Мова перекладу">
+                                ${this.renderLanguageOptions('Ukrainian')}
+                            </select>
+                        </label>
+                        <button class="btn btn-primary" onclick="ProjectsView.create()">${Icons.wrap('forward', 16)} Далі</button>
                     </div>
                 </div>`;
 
@@ -25,8 +87,8 @@ const ProjectsView = {
                 html += `
                     <div class="empty-state">
                         <div class="empty-state-icon">${Icons.wrap('projects', 48)}</div>
-                        <p class="empty-state-title">Ще немає проєктів</p>
-                        <p class="empty-state-text">Створіть перший проєкт в��ще</p>
+                        <p class="empty-state-title">Ще немає замовлень</p>
+                        <p class="empty-state-text">Створіть перше замовлення вище</p>
                     </div>`;
             } else {
                 html += projects.map(p => {
@@ -61,13 +123,38 @@ const ProjectsView = {
         App.selectProject(project);
     },
 
+    renderLanguageOptions(selected) {
+        return this.languages.map(lang =>
+            `<option value="${App.esc(lang)}"${lang === selected ? ' selected' : ''}>${this.languageFlag(lang)} ${App.esc(lang)}</option>`
+        ).join('');
+    },
+
+    languageFlag(lang) {
+        return this.languageFlags[String(lang || '').trim()] || '🏳️';
+    },
+
+    async loadOptions() {
+        if (this.optionsLoaded) return;
+        this.optionsLoaded = true;
+        try {
+            const data = await API.getTranslationOptions();
+            const languages = Array.isArray(data.languages) ? data.languages.filter(Boolean) : [];
+            if (languages.length) this.languages = languages;
+        } catch (e) {
+            // Keep the local fallback list if the processor options endpoint is unavailable.
+        }
+    },
+
     async create() {
         const input = document.getElementById('new-project-name');
+        const source = document.getElementById('new-project-source')?.value || 'German';
+        const target = document.getElementById('new-project-target')?.value || 'Ukrainian';
         const name = (input.value || '').trim();
-        if (!name) { App.alert('Введіть назву проєкту'); return; }
+        if (!name) { App.alert('Введіть назву замовлення'); return; }
         if (name.length > 100) { App.alert('Назва занадто довга (макс. 100 символів)'); return; }
+        if (source === target) { App.alert('Оберіть різні мови'); return; }
         try {
-            const data = await API.createProject(name, '');
+            const data = await API.createProject(name, '', source, target);
             input.value = '';
             if (data.project) {
                 App.selectProject(data.project);
@@ -82,15 +169,15 @@ const ProjectsView = {
         overlay.className = 'modal-overlay';
         overlay.innerHTML = `
             <div class="modal">
-                <h3>\u270f\ufe0f Редагувати проєкт</h3>
+                <h3>Редагувати замовлення</h3>
                 <form id="edit-project-form">
                     <div class="form-group">
-                        <label>Назва проєкту</label>
+                        <label>Назва замовлення</label>
                         <input type="text" id="edit-name" class="form-input" value="${App.esc(currentName)}" required maxlength="100">
                     </div>
                     <div class="form-group">
                         <label>Опис</label>
-                        <textarea id="edit-desc" class="form-textarea" rows="3" maxlength="500" placeholder="Необов'язковий опис проєкту">${App.esc(currentDescription)}</textarea>
+                        <textarea id="edit-desc" class="form-textarea" rows="3" maxlength="500" placeholder="Необов'язковий опис замовлення">${App.esc(currentDescription)}</textarea>
                     </div>
                     <div class="modal-actions">
                         <button type="button" class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Скасувати</button>
@@ -116,7 +203,7 @@ const ProjectsView = {
                 await API.updateProject(projectId, { name, description });
                 overlay.remove();
                 this.render(document.getElementById('content'));
-                App.toast('Проєкт оновлено', 'success');
+                App.toast('Замовлення оновлено', 'success');
             } catch (err) {
                 App.toast(err.message, 'error');
             }
@@ -129,13 +216,13 @@ const ProjectsView = {
 
     async deleteProject(projectId, projectName) {
         App.modalConfirm(
-            '\u26a0\ufe0f Видалити проєкт?',
-            `Ви впевнені, що хочете видалити проєкт \u00ab${projectName}\u00bb? Це видалить усі файли, глосарії та повідомлення. Цю дію не можна скасувати.`,
+            'Видалити замовлення?',
+            `Ви впевнені, що хочете видалити замовлення \u00ab${projectName}\u00bb? Це видалить файли, історію оплати та повідомлення. Цю дію не можна скасувати.`,
             async () => {
                 try {
                     await API.deleteProject(projectId);
                     this.render(document.getElementById('content'));
-                    App.toast('Проєкт видалено', 'success');
+                    App.toast('Замовлення видалено', 'success');
                 } catch (err) {
                     App.toast(err.message, 'error');
                 }

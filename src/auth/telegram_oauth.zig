@@ -77,9 +77,10 @@ pub fn handleTelegramAuth(req: *httpz.Request, res: *httpz.Response) !void {
     const session_token = try createWebSession(a, user.id, req);
     defer a.allocator.free(session_token);
 
-    // Redirect to app with session token (use stack buffer to avoid use-after-free)
-    var redirect_buf: [256]u8 = undefined;
-    const redirect_url = try std.fmt.bufPrint(&redirect_buf, "/app?session_token={s}", .{session_token});
+    const redirect_url = try std.fmt.allocPrint(res.arena, "{s}?session_token={s}", .{
+        a.config.mini_app_url,
+        session_token,
+    });
 
     res.status = 302;
     res.header("Location", redirect_url);

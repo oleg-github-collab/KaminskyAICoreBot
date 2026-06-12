@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Вхід — KI Beratung</title>
+    <title>Вхід — Перекладач документів</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -82,16 +82,16 @@
 </head>
 <body>
     <div class="login-container">
-        <div class="logo">🤖</div>
-        <h1>KI Beratung</h1>
-        <p class="subtitle">Професійна система перекладацького менеджменту</p>
+        <div class="logo">🌐</div>
+        <h1>Перекладач документів</h1>
+        <p class="subtitle">Вхід до сервісу перекладу через Telegram</p>
 
         <!-- Telegram Login Widget -->
         <div class="telegram-widget">
             <script async src="https://telegram.org/js/telegram-widget.js?22"
                     data-telegram-login="aicore_kaminskyibot"
                     data-size="large"
-                    data-auth-url="https://bot-production-d5ec.up.railway.app/auth/telegram"
+                    data-auth-url="https://kaminskyi.chat/translatorbot/auth/telegram"
                     data-request-access="write"></script>
         </div>
 
@@ -129,16 +129,17 @@
 
     <script>
         // Check if already logged in
+        const APP_BASE_PATH = window.location.pathname.startsWith('/translatorbot') ? '/translatorbot' : '';
         const token = localStorage.getItem('ki_session_token');
         if (token) {
             // Verify token and redirect to app
-            fetch('/api/auth/verify', {
+            fetch(APP_BASE_PATH + '/api/auth/verify', {
                 headers: { 'Authorization': 'Bearer ' + token }
             })
             .then(r => r.json())
             .then(data => {
                 if (data.valid) {
-                    window.location.href = '/app';
+                    window.location.href = APP_BASE_PATH + '/app';
                 } else {
                     localStorage.removeItem('ki_session_token');
                 }

@@ -1,21 +1,70 @@
-/// Pricing module: €0.58 per 1800 chars (text), €0.89 per 1800 chars (PDF/docs)
+/// Pricing module for translation orders.
+/// Commercial unit: 1800 billable characters.
 const std = @import("std");
+
+pub const CHARS_PER_UNIT: u64 = 1800;
+pub const RATE_TEXT_NO_GLOSSARY_CENTS: i64 = 68;
+pub const RATE_TEXT_GLOSSARY_CENTS: i64 = 91;
+pub const RATE_COMPLEX_GLOSSARY_CENTS: i64 = 135;
+
+pub fn unitsForChars(char_count: u64) u64 {
+    if (char_count == 0) return 0;
+    return (char_count + CHARS_PER_UNIT - 1) / CHARS_PER_UNIT;
+}
 
 /// Calculate price in euro cents for a text file
 pub fn priceForChars(char_count: u64) i64 {
     if (char_count == 0) return 0;
-    // Round up to nearest 1800-char unit
-    const units = (char_count + 1799) / 1800;
-    // €0.58 per unit = 58 cents
-    return @intCast(units * 58);
+    return @intCast(unitsForChars(char_count) * RATE_TEXT_NO_GLOSSARY_CENTS);
 }
 
 /// Calculate price in euro cents for a PDF or document.
-/// "page" = 1800 characters. €0.89 per 1800 chars.
+/// Legacy helper: page_count is treated as 1800-character equivalents.
 pub fn priceForPages(page_count: u64) i64 {
     if (page_count == 0) return 0;
-    // €0.89 per 1800 chars = 89 cents per page-equivalent
-    return @intCast(page_count * 89);
+    return @intCast(page_count * RATE_COMPLEX_GLOSSARY_CENTS);
+}
+
+pub fn effectiveChars(char_count: i64, page_count: i64) u64 {
+    const chars: u64 = if (char_count > 0) @intCast(char_count) else 0;
+    const pages: u64 = if (page_count > 0) @intCast(page_count) else 0;
+    const page_chars = pages * CHARS_PER_UNIT;
+    return @max(chars, page_chars);
+}
+
+pub fn isComplexOtranslatorFormat(file_name: []const u8) bool {
+    const dot_idx = std.mem.lastIndexOfScalar(u8, file_name, '.') orelse return true;
+    const ext_raw = file_name[dot_idx..];
+    var ext_buf: [16]u8 = undefined;
+    const ext_len = @min(ext_raw.len, ext_buf.len);
+    for (ext_raw[0..ext_len], 0..) |ch, i| {
+        ext_buf[i] = if (ch >= 'A' and ch <= 'Z') ch + 32 else ch;
+    }
+    const ext = ext_buf[0..ext_len];
+
+    if (std.mem.eql(u8, ext, ".txt") or
+        std.mem.eql(u8, ext, ".docx") or
+        std.mem.eql(u8, ext, ".md") or
+        std.mem.eql(u8, ext, ".rtf"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+pub fn rateForFile(file_name: []const u8, has_glossary: bool) i64 {
+    if (isComplexOtranslatorFormat(file_name)) {
+        return RATE_COMPLEX_GLOSSARY_CENTS;
+    }
+    return if (has_glossary) RATE_TEXT_GLOSSARY_CENTS else RATE_TEXT_NO_GLOSSARY_CENTS;
+}
+
+pub fn priceForFile(file_name: []const u8, char_count: u64, has_glossary: bool) i64 {
+    const units = unitsForChars(char_count);
+    if (units == 0) return 0;
+    const rate: u64 = @intCast(rateForFile(file_name, has_glossary));
+    return @intCast(units * rate);
 }
 
 /// Format euro cents as string (e.g. 1234 -> "12.34")
@@ -27,11 +76,11 @@ pub fn formatEuro(buf: []u8, cents: i64) []const u8 {
     return len;
 }
 
-/// Accurate character counting for translation pricing.
+/// Conservative character counting for translation pricing.
 /// - Strips UTF-8 BOM
-/// - Normalizes whitespace (runs of spaces/tabs/newlines → single space)
+/// - Counts whitespace characters instead of collapsing them
 /// - Skips control characters (0x00–0x08, 0x0E–0x1F)
-/// - Counts visible Unicode codepoints + single interword spaces
+/// - Counts visible Unicode codepoints
 /// - Trims leading/trailing whitespace
 pub fn countChars(text: []const u8) u64 {
     if (text.len == 0) return 0;
@@ -43,18 +92,24 @@ pub fn countChars(text: []const u8) u64 {
     }
 
     var count: u64 = 0;
-    var prev_was_space: bool = true; // true initially to skip leading whitespace
+    var end: usize = text.len;
+    while (end > start and isBillableWhitespace(text[end - 1])) : (end -= 1) {}
+    while (start < end and isBillableWhitespace(text[start])) : (start += 1) {}
+
     var i: usize = start;
 
-    while (i < text.len) {
+    while (i < end) {
         const byte = text[i];
 
+        if (byte == '\r' and i + 1 < end and text[i + 1] == '\n') {
+            count += 1;
+            i += 2;
+            continue;
+        }
+
         // Whitespace: space, tab, newline, carriage return, vertical tab, form feed
-        if (byte == ' ' or byte == '\t' or byte == '\n' or byte == '\r' or byte == 0x0B or byte == 0x0C) {
-            if (!prev_was_space) {
-                count += 1; // Count run of whitespace as single space
-                prev_was_space = true;
-            }
+        if (isBillableWhitespace(byte)) {
+            count += 1;
             i += 1;
             continue;
         }
@@ -64,8 +119,6 @@ pub fn countChars(text: []const u8) u64 {
             i += 1;
             continue;
         }
-
-        prev_was_space = false;
 
         // Count one Unicode codepoint and advance past its UTF-8 bytes
         if (byte < 0x80) {
@@ -90,10 +143,11 @@ pub fn countChars(text: []const u8) u64 {
         }
     }
 
-    // Remove trailing space (if last char group ended with whitespace we counted)
-    if (prev_was_space and count > 0) count -= 1;
-
     return count;
+}
+
+fn isBillableWhitespace(byte: u8) bool {
+    return byte == ' ' or byte == '\t' or byte == '\n' or byte == '\r' or byte == 0x0B or byte == 0x0C;
 }
 
 /// Detect whether file data is actual readable text (not binary/archive/PDF).
@@ -206,16 +260,14 @@ pub fn countPdfPages(data: []const u8) u64 {
 /// €0.91 per 1800 chars = 91 cents per page-equivalent.
 pub fn priceTranslationOptimum(char_count: u64) i64 {
     if (char_count == 0) return 0;
-    const units = (char_count + 1799) / 1800;
-    return @intCast(units * 91);
+    return @intCast(unitsForChars(char_count) * RATE_TEXT_GLOSSARY_CENTS);
 }
 
 /// Calculate price in euro cents for Ультра translation tier.
 /// €1.35 per 1800 chars = 135 cents per page-equivalent.
 pub fn priceTranslationUltra(char_count: u64) i64 {
     if (char_count == 0) return 0;
-    const units = (char_count + 1799) / 1800;
-    return @intCast(units * 135);
+    return @intCast(unitsForChars(char_count) * RATE_COMPLEX_GLOSSARY_CENTS);
 }
 
 /// Determine file category based on mime type and extension

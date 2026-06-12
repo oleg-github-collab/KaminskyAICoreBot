@@ -221,36 +221,62 @@ const UploadWizard = {
         this._startUpload();
     },
 
+    /** Upload a single file once, failing after 30s. Resolves with parsed server data. */
+    _uploadOnce(entry) {
+        const fd = new FormData();
+        fd.append('file', entry.file);
+        fd.append('category', this._category);
+
+        const uploadPromise = fetch(API.base + '/projects/' + this._projectId + '/files', {
+            method: 'POST',
+            headers: { 'Authorization': API.initData() },
+            body: fd
+        }).then(async (r) => {
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(data.error || '\u041f\u043e\u043c\u0438\u043b\u043a\u0430');
+            return data;
+        });
+
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('\u0427\u0430\u0441 \u043e\u0447\u0456\u043a\u0443\u0432\u0430\u043d\u043d\u044f \u0432\u0438\u0447\u0435\u0440\u043f\u0430\u043d\u043e')), 30000);
+        });
+
+        return Promise.race([uploadPromise, timeoutPromise]);
+    },
+
     async _startUpload() {
         const pending = this._files.filter(f => f.status === 'pending');
         if (!pending.length) return;
+
+        const backoffs = [1000, 2000, 4000]; // auto-retry delays before manual retry
 
         for (const entry of pending) {
             entry.status = 'uploading';
             this._renderFileList();
 
-            try {
-                const fd = new FormData();
-                fd.append('file', entry.file);
-                fd.append('category', this._category);
-
-                const r = await fetch('/api/projects/' + this._projectId + '/files', {
-                    method: 'POST',
-                    headers: { 'Authorization': API.initData() },
-                    body: fd
-                });
-                const data = await r.json();
-                if (r.ok) {
+            let lastErr = null;
+            // Initial attempt + up to 3 auto-retries with 1s/2s/4s backoff.
+            for (let attempt = 0; attempt <= backoffs.length; attempt++) {
+                try {
+                    const data = await this._uploadOnce(entry);
                     entry.status = 'done';
                     entry.result = data;
+                    entry.errorMsg = null;
                     this._uploaded.push(data);
-                } else {
-                    entry.status = 'error';
-                    entry.errorMsg = data.error || '\u041f\u043e\u043c\u0438\u043b\u043a\u0430';
+                    lastErr = null;
+                    break;
+                } catch (e) {
+                    lastErr = e;
+                    if (attempt < backoffs.length) {
+                        await new Promise(r => setTimeout(r, backoffs[attempt]));
+                        this._renderFileList();
+                    }
                 }
-            } catch (e) {
+            }
+
+            if (lastErr) {
                 entry.status = 'error';
-                entry.errorMsg = e.message;
+                entry.errorMsg = lastErr.message;
             }
             this._renderFileList();
         }
@@ -270,8 +296,8 @@ const UploadWizard = {
                 : Icons.wrap('clock', 18);
 
             const meta = f.status === 'done' && f.result
-                ? (f.result.char_count ? f.result.char_count.toLocaleString() + ' \u0441\u0438\u043c.' : '') +
-                  (f.result.page_count ? (f.result.char_count ? ' \u00b7 ' : '') + f.result.page_count + ' \u0441\u0442\u043e\u0440.' : '') +
+                ? ((f.result?.char_count || 0) ? (f.result?.char_count || 0).toLocaleString() + ' \u0441\u0438\u043c.' : '') +
+                  ((f.result?.page_count || 0) ? ((f.result?.char_count || 0) ? ' \u00b7 ' : '') + (f.result?.page_count || 0) + ' \u0441\u0442\u043e\u0440.' : '') +
                   (f.result.estimated_price_cents ? ' \u00b7 \u20ac' + App.fmtEuro(f.result.estimated_price_cents) : '')
                 : f.status === 'error' ? '<span style="color:var(--red)">' + App.esc(f.errorMsg) + '</span>'
                 : App.fmtSize(f.file.size);

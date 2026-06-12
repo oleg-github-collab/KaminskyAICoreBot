@@ -10,18 +10,14 @@ const sqlite = @import("../db/sqlite.zig");
 const storage = @import("../storage/filesystem.zig");
 const workflow = @import("workflow.zig");
 
-/// Build the admin menu keyboard JSON (full functionality)
+/// Build the admin menu keyboard JSON for the new app-first flow.
 fn mainMenuKeyboard(allocator: std.mem.Allocator, mini_app_url: []const u8) ![]const u8 {
     return tg_client.buildKeyboard(allocator, &.{
         &.{
-            .{ .text = "📁 Мої проєкти", .callback_data = "menu:projects" },
-            .{ .text = "➕ Новий проєкт", .callback_data = "menu:new_project" },
+            .{ .text = "📱 Відкрити застосунок", .web_app_url = mini_app_url },
         },
         &.{
             .{ .text = "💬 Повідомлення", .callback_data = "menu:chat" },
-            .{ .text = "📱 Застосунок", .web_app_url = mini_app_url },
-        },
-        &.{
             .{ .text = "❓ Допомога", .callback_data = "menu:help" },
         },
     });
@@ -47,23 +43,7 @@ pub fn projectMenuKeyboard(allocator: std.mem.Allocator, project_id: i64) ![]con
     const mini_app_url = handler.app_global.config.mini_app_url;
     return tg_client.buildKeyboard(allocator, &.{
         &.{
-            .{ .text = "📤 Вихідні файли", .callback_data = "proj:upload_source" },
-            .{ .text = "📥 Референси", .callback_data = "proj:upload_ref" },
-        },
-        &.{
-            .{ .text = "🔍 Глосарій", .callback_data = "proj:glossary" },
-            .{ .text = "📋 Файли", .callback_data = "proj:files" },
-        },
-        &.{
-            .{ .text = "📎 Інструкції", .callback_data = "proj:upload_instructions" },
-            .{ .text = "💰 Вартість", .callback_data = "proj:pricing" },
-        },
-        &.{
-            .{ .text = "👥 Команда", .callback_data = "proj:team" },
-            .{ .text = "📱 Застосунок", .web_app_url = mini_app_url },
-        },
-        &.{
-            .{ .text = "🗑 Видалити", .callback_data = "proj:delete" },
+            .{ .text = "📱 Відкрити замовлення", .web_app_url = mini_app_url },
         },
         &.{
             .{ .text = "🔙 Назад", .callback_data = "menu:back" },
@@ -106,7 +86,7 @@ pub fn handleStart(
             const payload = text[space_idx + 1 ..];
             if (std.mem.startsWith(u8, payload, "invite_")) {
                 const code = payload[7..];
-                try handleJoinInvite(allocator, db, tg, msg.chat.id, user, code);
+                try handleJoinInvite(allocator, db, tg, msg.chat.id, user, code, admin_chat_id);
                 return;
             }
         }
@@ -148,26 +128,56 @@ fn handleJoinInvite(
     chat_id: i64,
     user: *const db_users.UserRecord,
     code: []const u8,
+    admin_chat_id: i64,
 ) !void {
     const project = try db_projects.getByInviteCode(allocator, db, code) orelse {
-        const resp = try tg.sendMessage(chat_id, "Посилання недійсне або проєкт не знайдено.", null);
+        const resp = try tg.sendMessage(chat_id, "Посилання-запрошення недійсне або застаріле.", null);
         allocator.free(resp);
         return;
     };
 
-    if (try db_projects.isMember(db, project.id, user.id)) {
-        const resp = try tg.sendMessage(chat_id, "Ви вже є учасником цього проєкту.", null);
+    if (!project.is_active) {
+        const resp = try tg.sendMessage(chat_id, "Це замовлення вже неактивне.", null);
         allocator.free(resp);
         return;
     }
 
     try db_projects.addMember(db, project.id, user.id);
     try flow.setUserState(db, user.id, .project_menu, project.id);
+    logInviteJoin(db, user.id, project.id) catch |err| {
+        std.log.warn("Failed to audit invite join for user {d}, project {d}: {}", .{ user.id, project.id, err });
+    };
 
-    var buf: [256]u8 = undefined;
-    const text = std.fmt.bufPrint(&buf, "Ви успішно приєднались до проєкту <b>{s}</b>!", .{project.name}) catch "Joined!";
-    const resp = try tg.sendMessage(chat_id, text, null);
+    const kb = try projectMenuKeyboard(allocator, project.id);
+    defer allocator.free(kb);
+    const resp = try tg.sendMessage(
+        chat_id,
+        "Вас додано до команди замовлення. Відкрийте застосунок, щоб працювати з файлами та коментарями.",
+        kb,
+    );
     allocator.free(resp);
+
+    var notify_buf: [512]u8 = undefined;
+    const notify = std.fmt.bufPrint(&notify_buf,
+        "Користувач <b>{s}</b> приєднався до замовлення <b>{s}</b> через invite.",
+        .{ user.first_name, project.name },
+    ) catch "User joined project invite";
+    const admin_resp = tg.sendMessage(admin_chat_id, notify, null) catch null;
+    if (admin_resp) |body| allocator.free(body);
+}
+
+fn logInviteJoin(db: *sqlite.Db, user_id: i64, project_id: i64) !void {
+    var stmt = try db.prepare(
+        \\INSERT INTO audit_log
+        \\  (user_id, project_id, action, resource_type, resource_id, old_value, new_value, ip_address, user_agent, created_at)
+        \\VALUES (?, ?, 'join_invite', 'team_member', ?, NULL, 'joined through Telegram invite', 'telegram', 'telegram', ?)
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, user_id);
+    try stmt.bindInt(2, project_id);
+    try stmt.bindInt(3, project_id);
+    try stmt.bindInt(4, std.time.timestamp());
+    try stmt.exec();
 }
 
 /// Handle callback queries from inline buttons
@@ -185,7 +195,9 @@ pub fn handleCallback(
     const data = cbq.data orelse return;
 
     // Answer callback immediately
-    tg.answerCallbackQuery(cbq.id, null) catch {};
+    tg.answerCallbackQuery(cbq.id, null) catch |e| {
+        std.log.warn("Failed to answer callback query {s}: {}", .{ cbq.id, e });
+    };
 
     const chat_id = if (cbq.message) |m| m.chat.id else cbq.from.id;
     const is_admin = cbq.from.id == admin_chat_id;
@@ -218,15 +230,9 @@ pub fn handleCallback(
         return;
     }
 
-    // === Admin-only callbacks below ===
-
-    if (std.mem.eql(u8, data, "menu:projects")) {
-        try showProjectsList(allocator, db, tg, chat_id, user);
-    } else if (std.mem.eql(u8, data, "menu:new_project")) {
-        try flow.setUserState(db, user.id, .creating_project, null);
-        const resp = try tg.sendMessage(chat_id, msgs.project_name_prompt, null);
-        allocator.free(resp);
-    } else if (std.mem.eql(u8, data, "menu:chat")) {
+    // Admin uses the same app-first flow. Old Telegram menu callbacks are kept
+    // as a compatibility fallback for messages sent before this release.
+    if (std.mem.eql(u8, data, "menu:chat")) {
         try flow.setUserState(db, user.id, .chatting, null);
         const kb = try chatKeyboard(allocator);
         defer allocator.free(kb);
@@ -243,68 +249,6 @@ pub fn handleCallback(
         defer allocator.free(kb);
         const resp = try tg.sendMessage(chat_id, msgs.choose_action, kb);
         allocator.free(resp);
-    } else if (std.mem.startsWith(u8, data, "proj:select:")) {
-        const id_str = data[12..];
-        const project_id = std.fmt.parseInt(i64, id_str, 10) catch return;
-        try selectProject(allocator, db, tg, chat_id, user, project_id);
-    } else if (std.mem.eql(u8, data, "proj:upload_source")) {
-        const us = try flow.getUserState(db, user.id);
-        if (us.project_id) |_| {
-            try flow.setUserState(db, user.id, .uploading_source, us.project_id);
-            const kb = try uploadKeyboard(allocator);
-            defer allocator.free(kb);
-            const resp = try tg.sendMessage(chat_id, msgs.upload_source_prompt, kb);
-            allocator.free(resp);
-        }
-    } else if (std.mem.eql(u8, data, "proj:upload_ref")) {
-        const us = try flow.getUserState(db, user.id);
-        if (us.project_id) |_| {
-            try flow.setUserState(db, user.id, .uploading_reference, us.project_id);
-            const kb = try uploadKeyboard(allocator);
-            defer allocator.free(kb);
-            const resp = try tg.sendMessage(chat_id, msgs.upload_reference_prompt, kb);
-            allocator.free(resp);
-        }
-    } else if (std.mem.eql(u8, data, "upload:done")) {
-        try handleUploadDone(allocator, db, tg, chat_id, user, mini_app_url);
-    } else if (std.mem.eql(u8, data, "upload:cancel")) {
-        const us = try flow.getUserState(db, user.id);
-        if (us.project_id) |pid| {
-            try flow.setUserState(db, user.id, .project_menu, pid);
-            try selectProject(allocator, db, tg, chat_id, user, pid);
-        } else {
-            try flow.setUserState(db, user.id, .idle, null);
-            const kb = try mainMenuKeyboard(allocator, mini_app_url);
-            defer allocator.free(kb);
-            const resp = try tg.sendMessage(chat_id, msgs.choose_action, kb);
-            allocator.free(resp);
-        }
-    } else if (std.mem.eql(u8, data, "proj:team")) {
-        try handleTeamInfo(allocator, db, tg, chat_id, user, bot_username);
-    } else if (std.mem.eql(u8, data, "proj:pricing")) {
-        try handlePricing(allocator, db, tg, chat_id, user);
-    } else if (std.mem.eql(u8, data, "proj:files")) {
-        try handleFilesList(allocator, db, tg, chat_id, user);
-    } else if (std.mem.eql(u8, data, "proj:glossary")) {
-        try handleGlossaryRequest(allocator, db, tg, chat_id, user, admin_chat_id);
-    } else if (std.mem.eql(u8, data, "proj:pay")) {
-        try handlePayment(allocator, db, tg, chat_id, user, admin_chat_id);
-    } else if (std.mem.eql(u8, data, "proj:back_to_project")) {
-        const us = try flow.getUserState(db, user.id);
-        if (us.project_id) |pid| {
-            try selectProject(allocator, db, tg, chat_id, user, pid);
-        }
-    } else if (std.mem.eql(u8, data, "proj:delete")) {
-        try handleDeleteProject(allocator, db, tg, chat_id, user, mini_app_url);
-    } else if (std.mem.eql(u8, data, "proj:upload_instructions")) {
-        const us = try flow.getUserState(db, user.id);
-        if (us.project_id) |_| {
-            try flow.setUserState(db, user.id, .uploading_instructions, us.project_id);
-            const kb = try uploadKeyboard(allocator);
-            defer allocator.free(kb);
-            const resp = try tg.sendMessage(chat_id, "Надішліть файли з інструкціями, готовими глосаріями або стилістичними вказівками.\n\nЦі файли не тарифікуються.", kb);
-            allocator.free(resp);
-        }
     } else if (std.mem.startsWith(u8, data, "wf:")) {
         // Workflow callbacks: wf:approve:1:123, wf:reject:2:456
         if (cbq.from.id == admin_chat_id) {
@@ -315,8 +259,14 @@ pub fn handleCallback(
             const pid_str = parts.next() orelse return;
             try workflow.handleAdminAction(allocator, db, tg, admin_chat_id, action, step_str, pid_str);
         }
+    } else {
+        const kb = try mainMenuKeyboard(allocator, mini_app_url);
+        defer allocator.free(kb);
+        const resp = try tg.sendMessage(chat_id, msgs.use_app, kb);
+        allocator.free(resp);
     }
 
+    _ = bot_username;
     _ = data_dir;
 }
 
@@ -501,8 +451,9 @@ fn handlePricing(
         \\Вихідних файлів: {d}
         \\Референсних файлів: {d}
         \\
-        \\Текстові файли: €0.58 за 1800 символів
-        \\PDF та документи: €0.89 за 1800 символів
+        \\TXT/DOCX без глосарію: €0.68 за 1800 символів
+        \\TXT/DOCX з глосарієм: €0.91 за 1800 символів
+        \\PDF/OCR/XLSX та подібні: €1.35 за 1800 символів
         \\
         \\<b>Загальна вартість: €{s}</b>
     , .{ source_stats.count, ref_stats.count, price_str }) catch "Pricing info";
@@ -627,15 +578,15 @@ fn handlePayment(
     // Save invoice
     var inv_stmt = try db.prepare(
         \\INSERT INTO invoices
-        \\  (project_id, user_id, amount_cents, currency, description, stripe_session_id, stripe_payment_url, status, created_at)
-        \\VALUES (?, ?, ?, 'EUR', ?, ?, ?, 'pending', ?)
+        \\  (project_id, user_id, amount_cents, currency, description, stripe_session_id, stripe_payment_url, status, invoice_type, created_at)
+        \\VALUES (?, ?, ?, 'EUR', ?, ?, ?, 'pending', 'translation', ?)
     );
     defer inv_stmt.deinit();
     try inv_stmt.bindInt(1, pid);
     try inv_stmt.bindInt(2, user.id);
     try inv_stmt.bindInt(3, amount_cents);
     var desc_buf: [256]u8 = undefined;
-    const desc = std.fmt.bufPrint(&desc_buf, "KI Beratung — {s}", .{project.name}) catch "KI Beratung";
+    const desc = std.fmt.bufPrint(&desc_buf, "Переклад документів — {s}", .{project.name}) catch "Переклад документів";
     try inv_stmt.bindText(4, desc);
     try inv_stmt.bindText(5, session.id);
     try inv_stmt.bindText(6, session.url);

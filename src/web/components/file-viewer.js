@@ -6,6 +6,7 @@ const FileViewer = {
     currentContentType: 'text',
     overlay: null,
     lockedSegIdx: null,
+    _escHandler: null,
     _pendingSelection: null,
     _selectionCleanup: null,
 
@@ -360,10 +361,11 @@ const FileViewer = {
         document.body.appendChild(this.overlay);
         this.overlay.addEventListener('click', (e) => { if (e.target === this.overlay) this.close(); });
 
-        const escHandler = (e) => {
-            if (e.key === 'Escape') { this.close(); document.removeEventListener('keydown', escHandler); }
+        if (this._escHandler) document.removeEventListener('keydown', this._escHandler);
+        this._escHandler = (e) => {
+            if (e.key === 'Escape') this.close();
         };
-        document.addEventListener('keydown', escHandler);
+        document.addEventListener('keydown', this._escHandler);
 
         const contentPromise = this.loadContent(projectId, fileId);
         const commentsPromise = CommentsView.renderInto(
@@ -641,81 +643,52 @@ const FileViewer = {
     },
 
     // Selection handler — shows 3-button toolbar on text selection
-    // Uses getClientRects for precise last-line placement, dismisses on scroll
+    // Tracks cursor position for reliable placement with large selections
     attachSelectionHandler(container) {
         if (!container) return;
         if (this._selectionCleanup) this._selectionCleanup();
 
         const textEl = container.querySelector('.file-text-content') || container;
         let lastPtr = { x: 0, y: 0 };
-        let toolbarTimeout = null;
-
-        const removeToolbar = () => {
-            document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
-            if (toolbarTimeout) { clearTimeout(toolbarTimeout); toolbarTimeout = null; }
-        };
 
         const showToolbar = () => {
-            removeToolbar();
+            document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
 
             const selection = window.getSelection();
-            if (!selection || selection.rangeCount === 0) return;
-            const selectedText = selection.toString().trim();
-            if (!selectedText) return;
+            const selectedText = (selection || '').toString().trim();
+            if (!selectedText || selectedText.length === 0) return;
 
             let range;
             try { range = selection.getRangeAt(0); } catch(e) { return; }
-
-            // Ensure selection is within our text area
-            if (!textEl.contains(range.commonAncestorContainer)) return;
-
             const offsets = this.calculateOffsets(range, textEl);
 
-            // Position: use selection rects for accurate placement
-            const rects = range.getClientRects();
-            const lastRect = rects.length > 0 ? rects[rects.length - 1] : range.getBoundingClientRect();
+            // Position: use viewport-relative coords (fixed positioning)
+            // getBoundingClientRect() returns viewport coords — no scroll offset needed
+            const rect = range.getBoundingClientRect();
             let top, left;
 
-            if (lastRect && lastRect.height > 0 && lastRect.bottom > 0 && lastRect.bottom < window.innerHeight) {
-                top = lastRect.bottom + 8;
-                left = lastRect.left;
+            if (rect && rect.height > 0 && rect.height < window.innerHeight * 0.7 && rect.bottom > 0) {
+                top = rect.bottom + 6;
+                left = rect.left;
             } else {
-                top = lastPtr.y + 14;
-                left = lastPtr.x - 100;
+                // Large selection or off-screen rect — use last known cursor position
+                top = lastPtr.y + 12;
+                left = lastPtr.x - 80;
             }
-
-            // On mobile: full-width toolbar near bottom
-            const isMobile = window.innerWidth <= 767;
-            if (isMobile) { left = 16; }
 
             // Clamp within viewport
-            left = Math.max(8, Math.min(left, window.innerWidth - 320));
-            top = Math.max(8, Math.min(top, window.innerHeight - 70));
-
-            // If toolbar overlaps selection, place above
-            const firstRect = rects.length > 0 ? rects[0] : lastRect;
-            if (firstRect && top > firstRect.top - 60 && top < firstRect.bottom + 8) {
-                const above = firstRect.top - 56;
-                if (above > 8) top = above;
-            }
+            left = Math.max(8, Math.min(left, window.innerWidth - 300));
+            top = Math.min(top, window.innerHeight - 60);
 
             const toolbar = document.createElement('div');
             toolbar.className = 'selection-toolbar';
             toolbar.style.position = 'fixed';
             toolbar.style.top = top + 'px';
             toolbar.style.left = left + 'px';
-            if (isMobile) {
-                toolbar.style.right = '16px';
-                toolbar.style.left = '16px';
-                toolbar.style.width = 'auto';
-            }
             toolbar.innerHTML =
                 '<button onclick="FileViewer.startComment()" title="Додати коментар">&#128172; Коментар</button>' +
                 '<button onclick="FileViewer.startSuggestion()" title="Запропонувати зміну">&#9998; Пропозиція</button>' +
                 '<button onclick="FileViewer.copyQuote()" title="Скопіювати цитату">&#128203; Копіювати</button>';
-
-            // Prevent toolbar click from clearing selection
-            toolbar.addEventListener('mousedown', (e) => e.preventDefault());
             document.body.appendChild(toolbar);
 
             this._pendingSelection = {
@@ -724,7 +697,7 @@ const FileViewer = {
                 end_offset: offsets.end
             };
 
-            toolbarTimeout = setTimeout(() => { if (toolbar.parentNode) toolbar.remove(); }, 20000);
+            setTimeout(() => { if (toolbar.parentNode) toolbar.remove(); }, 15000);
         };
 
         const onPointerMove = (e) => {
@@ -734,19 +707,19 @@ const FileViewer = {
             const t = e.touches[0];
             if (t) lastPtr = { x: t.clientX, y: t.clientY };
         };
-        const onMouseUp = () => { setTimeout(showToolbar, 50); };
-        const onTouchEnd = () => { setTimeout(showToolbar, 350); };
+        const onMouseUp = () => { setTimeout(showToolbar, 30); };
+        const onTouchEnd = () => { setTimeout(showToolbar, 250); };
         const onMouseDown = (e) => {
-            if (!e.target.closest('.selection-toolbar')) removeToolbar();
+            if (!e.target.closest('.selection-toolbar')) {
+                document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
+            }
         };
-        const onScroll = () => removeToolbar();
 
         textEl.addEventListener('mousemove', onPointerMove);
         textEl.addEventListener('touchmove', onTouchMove, { passive: true });
         textEl.addEventListener('mouseup', onMouseUp);
         textEl.addEventListener('touchend', onTouchEnd);
         document.addEventListener('mousedown', onMouseDown);
-        container.addEventListener('scroll', onScroll, { passive: true });
 
         this._selectionCleanup = () => {
             textEl.removeEventListener('mousemove', onPointerMove);
@@ -754,15 +727,13 @@ const FileViewer = {
             textEl.removeEventListener('mouseup', onMouseUp);
             textEl.removeEventListener('touchend', onTouchEnd);
             document.removeEventListener('mousedown', onMouseDown);
-            container.removeEventListener('scroll', onScroll);
-            removeToolbar();
         };
     },
 
     calculateOffsets(range, container) {
         const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
         let charCount = 0, startOffset = 0, endOffset = 0;
-        let foundStart = false, foundEnd = false;
+        let foundStart = false;
 
         while (walker.nextNode()) {
             const node = walker.currentNode;
@@ -772,14 +743,12 @@ const FileViewer = {
             }
             if (node === range.endContainer) {
                 endOffset = charCount + range.endOffset;
-                foundEnd = true;
                 break;
             }
             charCount += node.textContent.length;
         }
 
         if (!foundStart) startOffset = 0;
-        if (!foundEnd) endOffset = startOffset + range.toString().length;
         return { start: startOffset, end: endOffset };
     },
 
@@ -793,11 +762,10 @@ const FileViewer = {
             quoted_text: this._pendingSelection.text
         });
 
-        // Focus the comment editor in sidebar
-        const editorEl = document.querySelector('.cv-editor-wrap .ql-editor') || document.getElementById('comment-editor');
+        const editorEl = document.querySelector('.sidebar-editor .ql-editor') || document.getElementById('comment-editor');
         if (editorEl) {
             editorEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            setTimeout(() => { if (CommentsView.quill) CommentsView.quill.focus(); }, 300);
+            if (CommentsView.quill) CommentsView.quill.focus();
         }
     },
 
@@ -810,10 +778,6 @@ const FileViewer = {
             end_offset: this._pendingSelection.end_offset,
             quoted_text: this._pendingSelection.text
         });
-
-        // Scroll to suggestion form
-        const form = document.querySelector('.cv-suggestion-form');
-        if (form) form.scrollIntoView({ behavior: 'smooth', block: 'center' });
     },
 
     copyQuote() {
@@ -838,6 +802,7 @@ const FileViewer = {
 
     close() {
         if (this._selectionCleanup) { this._selectionCleanup(); this._selectionCleanup = null; }
+        if (this._escHandler) { document.removeEventListener('keydown', this._escHandler); this._escHandler = null; }
         if (this.overlay) { this.overlay.remove(); this.overlay = null; }
         document.querySelectorAll('.selection-toolbar').forEach(t => t.remove());
         this._pendingSelection = null;
@@ -882,10 +847,11 @@ const FileViewer = {
         document.body.appendChild(this.overlay);
         this.overlay.addEventListener('click', (e) => { if (e.target === this.overlay) this.close(); });
 
-        const escHandler = (e) => {
-            if (e.key === 'Escape') { this.close(); document.removeEventListener('keydown', escHandler); }
+        if (this._escHandler) document.removeEventListener('keydown', this._escHandler);
+        this._escHandler = (e) => {
+            if (e.key === 'Escape') this.close();
         };
-        document.addEventListener('keydown', escHandler);
+        document.addEventListener('keydown', this._escHandler);
 
         const srcEl = document.getElementById('fv-source');
         const tgtEl = document.getElementById('fv-target');
@@ -896,8 +862,25 @@ const FileViewer = {
             document.getElementById('fv-source-label').textContent = 'ОРИГІНАЛ \u2014 ' + (data.source_file.name || '');
             document.getElementById('fv-target-label').textContent = 'ПЕРЕКЛАД \u2014 ' + (data.target_file.name || '');
 
-            const srcContent = this._toStr(data.source_file.content);
-            const tgtContent = this._toStr(data.target_file.content);
+            let srcContent = this._toStr(data.source_file.content);
+            let tgtContent = this._toStr(data.target_file.content);
+
+            if (!srcContent.trim() && data.source_file.id) {
+                try {
+                    const srcLoaded = await API.getFileContent(projectId, data.source_file.id);
+                    srcContent = this._toStr(srcLoaded.content);
+                } catch (e) {
+                    console.warn('Source lazy content load failed:', e);
+                }
+            }
+            if (!tgtContent.trim() && data.target_file.id) {
+                try {
+                    const tgtLoaded = await API.getFileContent(projectId, data.target_file.id);
+                    tgtContent = this._toStr(tgtLoaded.content);
+                } catch (e) {
+                    console.warn('Target lazy content load failed:', e);
+                }
+            }
 
             if (!srcContent.trim() && !tgtContent.trim()) {
                 srcEl.innerHTML = '<div class="fv-empty-state"><p>Текст не витягнуто</p></div>';

@@ -10,6 +10,7 @@ pub const ProjectRecord = struct {
     target_lang: []const u8,
     invite_code: []const u8,
     is_active: bool,
+    use_glossary: bool = true,
     workflow_stage: []const u8 = "files_uploaded",
 };
 
@@ -58,13 +59,14 @@ pub fn create(allocator: std.mem.Allocator, db: *sqlite.Db, owner_id: i64, name:
         .target_lang = try allocator.dupe(u8, "UK"),
         .invite_code = try allocator.dupe(u8, &invite_code),
         .is_active = true,
+        .use_glossary = true,
     };
 }
 
 /// Get project by ID. Strings are duped into allocator and survive after statement finalization.
 pub fn getById(allocator: std.mem.Allocator, db: *sqlite.Db, project_id: i64) !?ProjectRecord {
     var stmt = try db.prepare(
-        "SELECT id, owner_id, name, description, source_lang, target_lang, invite_code, is_active, workflow_stage FROM projects WHERE id = ?",
+        "SELECT id, owner_id, name, description, source_lang, target_lang, invite_code, is_active, workflow_stage, COALESCE(use_glossary, 1) FROM projects WHERE id = ?",
     );
     defer stmt.deinit();
     try stmt.bindInt(1, project_id);
@@ -82,6 +84,7 @@ pub fn getById(allocator: std.mem.Allocator, db: *sqlite.Db, project_id: i64) !?
             .target_lang = try dupCol(allocator, stmt.columnText(5)),
             .invite_code = try dupCol(allocator, stmt.columnText(6)),
             .is_active = stmt.columnInt(7) == 1,
+            .use_glossary = stmt.columnInt(9) == 1,
             .workflow_stage = if (ws.len > 0) ws else "files_uploaded",
         };
     }
@@ -91,7 +94,7 @@ pub fn getById(allocator: std.mem.Allocator, db: *sqlite.Db, project_id: i64) !?
 /// Get project by invite code. Strings are duped into allocator.
 pub fn getByInviteCode(allocator: std.mem.Allocator, db: *sqlite.Db, code: []const u8) !?ProjectRecord {
     var stmt = try db.prepare(
-        "SELECT id, owner_id, name, description, source_lang, target_lang, invite_code, is_active, workflow_stage FROM projects WHERE invite_code = ?",
+        "SELECT id, owner_id, name, description, source_lang, target_lang, invite_code, is_active, workflow_stage, COALESCE(use_glossary, 1) FROM projects WHERE invite_code = ?",
     );
     defer stmt.deinit();
     try stmt.bindText(1, code);
@@ -107,6 +110,7 @@ pub fn getByInviteCode(allocator: std.mem.Allocator, db: *sqlite.Db, code: []con
             .target_lang = try dupCol(allocator, stmt.columnText(5)),
             .invite_code = try dupCol(allocator, stmt.columnText(6)),
             .is_active = stmt.columnInt(7) == 1,
+            .use_glossary = stmt.columnInt(9) == 1,
             .workflow_stage = if (ws.len > 0) ws else "files_uploaded",
         };
     }

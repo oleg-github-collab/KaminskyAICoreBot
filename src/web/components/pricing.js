@@ -1,344 +1,820 @@
-const TIERS = {
-    optimum: {
-        name: 'Оптимум',
-        priceCents: 91,
-        tagline: 'Швидкий та точний',
-        description: 'Професійний переклад з використанням вашого затвердженого глосарію. Ідеально для текстових документів, де важливий зміст, а не оформлення.',
-        features: [
-            'Переклад з урахуванням глосарію',
-            'Налаштування формальності (Sie/Ви, du/ти)',
-            'Контекст документу для точності',
-            'Швидкий результат \u2014 хвилини, не години',
-            'Перевірка спеціалістом перед видачею',
-        ],
-        formats: 'TXT, DOCX, PDF (текстові)',
-        badge: null,
-    },
-    ultra: {
-        name: 'Ультра',
-        priceCents: 135,
-        tagline: 'Максимальна якість',
-        description: 'Найвищий рівень перекладу з повним збереженням оригінального форматування. Для складних документів, презентацій та захищених файлів.',
-        features: [
-            'Переклад з урахуванням глосарію',
-            'Повне збереження макету та форматування',
-            '30+ форматів: PDF, DOCX, PPTX, XLSX, EPUB',
-            'Переклад тексту на зображеннях (PDF, DOCX)',
-            'Скановані та захищені паролем PDF',
-            'Двомовний PDF (оригінал + переклад поруч)',
-            'Переклад назв файлів',
-            'Перевірка спеціалістом перед видачею',
-        ],
-        formats: 'PDF, DOCX, PPTX, XLSX, EPUB, HTML, TXT та 20+ інших',
-        badge: 'Рекомендовано',
-    }
+const ORDER_LANGUAGES = [
+    'German', 'Ukrainian', 'English', 'Polish', 'French', 'Spanish',
+    'Italian', 'Dutch', 'Czech', 'Slovak', 'Romanian', 'Russian',
+    'Portuguese', 'Swedish', 'Danish', 'Finnish'
+];
+
+const LANGUAGE_FLAGS = {
+    German: '🇩🇪',
+    Ukrainian: '🇺🇦',
+    English: '🇬🇧',
+    Polish: '🇵🇱',
+    French: '🇫🇷',
+    Spanish: '🇪🇸',
+    Italian: '🇮🇹',
+    Dutch: '🇳🇱',
+    Czech: '🇨🇿',
+    Slovak: '🇸🇰',
+    Romanian: '🇷🇴',
+    Russian: '🇷🇺',
+    Portuguese: '🇵🇹',
+    Swedish: '🇸🇪',
+    Danish: '🇩🇰',
+    Finnish: '🇫🇮',
+    Norwegian: '🇳🇴',
+    Turkish: '🇹🇷',
+    Greek: '🇬🇷',
+    Bulgarian: '🇧🇬',
+    Hungarian: '🇭🇺',
+    Estonian: '🇪🇪',
+    Latvian: '🇱🇻',
+    Lithuanian: '🇱🇹',
+    Slovenian: '🇸🇮',
+    Croatian: '🇭🇷',
+    Serbian: '🇷🇸',
+    Arabic: '🇸🇦',
+    Hebrew: '🇮🇱',
+    Japanese: '🇯🇵',
+    Korean: '🇰🇷',
+    Chinese: '🇨🇳',
+    'Simplified Chinese': '🇨🇳',
+    'Traditional Chinese': '🇹🇼',
+    Hindi: '🇮🇳',
+    Indonesian: '🇮🇩',
+    Vietnamese: '🇻🇳',
+    Thai: '🇹🇭'
 };
 
 const PricingView = {
-    selectedTier: 'ultra',
     pricingData: null,
+    uploading: false,
+    activeStep: null,
+    projectId: null,
+    pollTimer: null,
+    orderLanguages: ORDER_LANGUAGES,
+    optionsLoaded: false,
+    silentPollFailures: 0,
 
     async render(c, project) {
+        this.stopStatusPolling();
         if (!project) {
-            c.innerHTML = '<div class="empty-state"><div class="empty-state-icon">' + Icons.wrap('pricing', 48) + '</div><p class="empty-state-title">Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
+            c.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">${Icons.wrap('pricing', 48)}</div>
+                    <p class="empty-state-title">Створіть або оберіть замовлення</p>
+                    <button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До замовлень</button>
+                </div>`;
             return;
         }
-
-        const stage = project.workflow_stage || 'files_uploaded';
-        c.innerHTML = `
-            <div class="section-header">
-                <h2>${App.esc(project.name)} \u2014 Замовлення</h2>
-            </div>
-            <div id="workflow-bar-container"></div>
-            <div id="pricing-content"><div class="loading" style="padding:40px;text-align:center">Завантаження...</div></div>
-            <div id="invoices-section" style="margin-top:24px"></div>`;
-
-        if (typeof WorkflowBar !== 'undefined') {
-            WorkflowBar.render(document.getElementById('workflow-bar-container'), stage);
+        if (this.projectId !== project.id) {
+            this.projectId = project.id;
+            this.activeStep = null;
         }
+        await this.loadOptions();
 
-        this.loadPricing(project.id, stage);
-        this.loadInvoices(project.id);
+        c.innerHTML = `
+            <div class="section-header order-header">
+                <div>
+                    <h2>${App.esc(project.name)}</h2>
+                    <div class="order-subtitle">Професійний переклад документів</div>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="PricingView.openSupportModal()">
+                    ${Icons.wrap('comment', 16)} Проблема
+                </button>
+            </div>
+            <div id="pricing-content"><div class="loading" style="padding:40px;text-align:center">Завантаження...</div></div>`;
+
+        await this.loadPricing(project.id);
     },
 
-    async loadPricing(pid, stage) {
+    async loadPricing(pid, silent = false) {
         const container = document.getElementById('pricing-content');
         if (!container) return;
 
         try {
             const data = await API.getPricing(pid);
             this.pricingData = data;
-            const p = data.pricing || {};
-            const files = data.files || [];
-
-            if (this.isGlossaryStage(stage)) {
-                this.renderGlossaryOrder(container, pid, p, files);
-            } else if (this.isTranslationStage(stage)) {
-                this.renderTranslationOrder(container, pid, p, files);
-            } else if (stage === 'completed') {
-                this.renderCompleted(container);
-            } else {
-                // glossary_paid, glossary_review — waiting stages
-                this.renderWaiting(container, stage);
-            }
+            this.silentPollFailures = 0;
+            this.renderOrder(container, pid, data);
         } catch (e) {
-            container.innerHTML = '<div class="empty-state"><p class="empty-state-text">' + App.esc(e.message) + '</p></div>';
+            console.error('Failed to load pricing:', e);
+            if (!silent) {
+                container.innerHTML = `<div class="empty-state"><p class="empty-state-text">${App.esc(e.message)}</p></div>`;
+            } else {
+                // Silent background poll failed — warn the user after repeated failures.
+                this.silentPollFailures++;
+                if (this.silentPollFailures >= 3) {
+                    this.silentPollFailures = 0;
+                    App.toast('Не вдається оновити статус, перезавантажте', 'warning');
+                }
+            }
         }
     },
 
-    isGlossaryStage(stage) {
-        return !stage || stage === 'files_uploaded';
-    },
-
-    isTranslationStage(stage) {
-        return ['glossary_approved', 'translation_paid', 'translation_processing', 'translation_review'].includes(stage);
-    },
-
-    // ─── Glossary Ordering (Stage 1) ─────────────────────────────────────
-    renderGlossaryOrder(container, pid, pricing, files) {
-        const totalCents = pricing.total_price_cents || 0;
-
-        let fileRows = '';
-        if (files.length > 0) {
-            fileRows = files.map(f => `
-                <div class="order-file-row">
-                    <div class="file-name">\ud83d\udcc4 ${App.esc(f.name)}</div>
-                    <div class="file-stats">${f.pages ? f.pages + ' стор.' : f.chars ? f.chars.toLocaleString() + ' сим.' : ''}</div>
-                    <div class="file-price">\u20ac${App.fmtEuro(f.price_cents || 0)}</div>
-                </div>
-            `).join('');
+    renderOrder(container, pid, data) {
+        const project = App.currentProject || {};
+        const pricing = data.pricing || {};
+        const files = data.files || [];
+        const stage = data.workflow_stage || project.workflow_stage || 'files_uploaded';
+        const targets = this.targetLanguages(pricing.target_lang || project.target_lang || 'Ukrainian');
+        const source = pricing.source_lang || project.source_lang || 'German';
+        const total = pricing.total_price_cents || 0;
+        const due = pricing.due_translation_cents ?? total;
+        const isProcessing = ['translation_paid', 'translation_processing', 'translation_review'].includes(stage);
+        const isCompleted = ['completed', 'completed_with_errors'].includes(stage);
+        const locked = isProcessing || isCompleted;
+        if (isProcessing) this.startStatusPolling(pid);
+        else this.stopStatusPolling();
+        if (locked) {
+            this.activeStep = 4;
         } else {
-            fileRows = `
-                <div class="stats" style="margin-bottom:12px">
-                    <div class="stat"><div class="stat-value">${pricing.total_files || 0}</div><div class="stat-label">Файлів</div></div>
-                    <div class="stat"><div class="stat-value">${(pricing.total_chars || 0).toLocaleString()}</div><div class="stat-label">Символів</div></div>
-                    <div class="stat"><div class="stat-value">${pricing.total_pages || 0}</div><div class="stat-label">Сторінок</div></div>
-                </div>`;
+            if (!this.activeStep) this.activeStep = files.length ? 3 : 1;
         }
+        const step = this.activeStep || 1;
 
         container.innerHTML = `
-            <div class="card" style="margin-bottom:16px">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-                    <div class="card-title">Створення глосарію</div>
-                </div>
-                <p style="color:var(--hint);font-size:13px;margin-bottom:16px;line-height:1.5">
-                    Глосарій \u2014 основа якісного перекладу. Спеціаліст підготує термінологію з ваших текстів
-                    для точного та послідовного перекладу всіх документів.
-                </p>
-                ${fileRows}
-                <div class="order-total">
-                    <span>Разом</span>
-                    <span>\u20ac${App.fmtEuro(totalCents)}</span>
-                </div>
-                ${totalCents > 0 ? `
-                    <button class="btn-order" onclick="PricingView.orderGlossary(${pid})">
-                        Замовити глосарій \u2014 \u20ac${App.fmtEuro(totalCents)}
-                    </button>
-                ` : `<div style="text-align:center;padding:16px 12px">
-                    <p style="color:var(--hint);font-size:13px;margin-bottom:12px">Завантажте вихідні файли для розрахунку вартості глосарію</p>
-                    <button class="btn btn-secondary btn-sm" onclick="App.navigate('files')" style="gap:6px">
-                        \ud83d\udcc2 Перейти до файлів
-                    </button>
-                </div>`}
-            </div>`;
+            ${this.renderProgress(step, files.length, pricing, isProcessing, isCompleted)}
+            ${step === 1 ? this.renderLanguagePanel(source, targets, locked) : ''}
+            ${step === 2 ? this.renderUploadPanel(pid, files, locked) : ''}
+            ${step === 3 ? this.renderSummary(pid, pricing, files, targets, locked, isCompleted) : ''}
+            ${isProcessing ? this.renderProcessingState(data, files, targets) : ''}
+            ${isCompleted ? this.renderCompletedState(data) : ''}
+            <input id="pricing-file-input" type="file" multiple
+                accept=".txt,.doc,.docx,.rtf,.pdf,.xls,.xlsx,.ppt,.pptx,.wps,.et,.dps,.odt,.ods,.odp,.epub,.chm,.ai,.indd,.idml,.html,.htm,.xml,.json,.resjson,.csv,.tsv,.md,.srt,.ass,.ssa,.vtt,.po,.xlf,.xliff,.go,.yml,.yaml,.php,.plist,.stringsdict,.tex,.arxiv,.jpg,.jpeg,.png,.webp,.svg"
+                style="display:none" onchange="PricingView.handleFilesSelected(this.files)">`;
     },
 
-    // ─── Translation Ordering (Stage 2) ─────────────────────────────────
-    renderTranslationOrder(container, pid, pricing, files) {
-        const trans = pricing.translation || {};
-
-        container.innerHTML = `
-            <div class="card" style="margin-bottom:16px">
-                <div class="card-title" style="margin-bottom:4px">Замовити переклад</div>
-                <p style="color:var(--hint);font-size:13px;margin-bottom:20px">Оберіть рівень перекладу для ваших документів</p>
-                <div class="tier-selector" id="tier-selector">
-                    ${this.renderTierCard('optimum')}
-                    ${this.renderTierCard('ultra')}
-                </div>
-            </div>
-            <div id="order-summary-container"></div>`;
-
-        this.updateOrderSummary(pid, files, trans);
-    },
-
-    renderTierCard(tierId) {
-        const tier = TIERS[tierId];
-        const isSelected = this.selectedTier === tierId;
+    renderProgress(current, fileCount, pricing, isProcessing, isCompleted) {
+        current = isCompleted ? 4 : isProcessing ? 4 : current;
+        const total = pricing.total_price_cents || 0;
+        const paid = pricing.paid_translation_cents || 0;
+        const due = pricing.due_translation_cents ?? total;
+        const steps = [
+            ['1', 'Мови'],
+            ['2', 'Файли'],
+            ['3', 'Оплата'],
+            ['4', 'Готово'],
+        ];
+        const amountLabel = total
+            ? (due > 0
+                ? `До сплати €${App.fmtEuro(due)}`
+                : `Оплачено €${App.fmtEuro(Math.min(paid, total))}`)
+            : '';
         return `
-            <div class="tier-card${isSelected ? ' selected' : ''}" onclick="PricingView.selectTier('${tierId}')">
-                ${tier.badge ? '<div class="tier-badge">\u2605 ' + tier.badge + '</div>' : ''}
-                <div class="tier-name">${tier.name}</div>
-                <div class="tier-tagline">${tier.tagline}</div>
-                <div class="tier-price"><span class="currency">\u20ac</span>${(tier.priceCents / 100).toFixed(2)}<span class="tier-price-unit"> / стор.</span></div>
-                <p class="tier-desc">${App.esc(tier.description)}</p>
-                <ul class="tier-features">
-                    ${tier.features.map(f => '<li>' + App.esc(f) + '</li>').join('')}
-                </ul>
-                <div class="tier-formats">Формати: ${App.esc(tier.formats)}</div>
-                <div class="tier-radio">
-                    <div class="tier-radio-dot"></div>
-                    <span>${isSelected ? 'Обрано' : 'Обрати'}</span>
+            <div class="order-progress">
+                ${steps.map((s, idx) => `
+                    <div class="order-step${idx + 1 < current ? ' active done' : ''}${idx + 1 === current ? ' active current' : ''}">
+                        <span>${s[0]}</span>
+                        <strong>${s[1]}</strong>
+                    </div>
+                `).join('')}
+                ${amountLabel ? `<div class="order-progress-total">${amountLabel}</div>` : ''}
+            </div>`;
+    },
+
+    renderLanguagePanel(source, targets, disabled) {
+        const availableTargets = this.availableTargetLanguages(source, targets);
+        const nextTarget = availableTargets[0] || '';
+        return `
+            <div class="order-panel">
+                <div class="order-panel-head">
+                    <div>
+                        <div class="order-panel-title">${Icons.wrap('globe', 18)} Мови</div>
+                        <div class="order-panel-note">Оберіть мову оригіналу та одну або кілька мов перекладу.</div>
+                    </div>
+                </div>
+                <div class="language-grid">
+                    <label class="field-label">
+                        Мова оригіналу
+                        <select class="input" id="order-source-lang" ${disabled ? 'disabled' : ''} onchange="PricingView.saveLanguages()">
+                            ${this.renderLanguageOptions(source)}
+                        </select>
+                    </label>
+                    <label class="field-label">
+                        Додати ще одну мову перекладу
+                        <div class="target-add-row">
+                            <select class="input" id="order-target-add" ${disabled || !availableTargets.length ? 'disabled' : ''}>
+                                ${availableTargets.length ? this.renderLanguageOptions(nextTarget, availableTargets) : '<option>Усі доступні мови вже додані</option>'}
+                            </select>
+                            <button class="btn btn-secondary" ${disabled || !availableTargets.length ? 'disabled' : ''} onclick="PricingView.addTargetLanguage()">
+                                ${Icons.wrap('plus', 16)}
+                                <span class="target-add-text">Додати мову</span>
+                            </button>
+                        </div>
+                    </label>
+                </div>
+                <div class="language-route-card">
+                    <div class="language-route-source">
+                        <span class="language-route-label">Оригінал</span>
+                        <span class="language-route-pill">${this.languageFlag(source)} ${App.esc(source)}</span>
+                    </div>
+                    <div class="language-route-arrow">→</div>
+                    <div class="language-route-targets">
+                        <span class="language-route-label">Додані мови перекладу</span>
+                        <div class="target-chip-row">
+                            ${targets.map(lang => this.renderTargetChip(lang, targets, disabled)).join('')}
+                        </div>
+                    </div>
+                </div>
+                <div class="order-actions">
+                    <button class="btn btn-primary" ${disabled ? 'disabled' : ''} onclick="PricingView.goStep(2)">
+                        ${Icons.wrap('forward', 16)} Продовжити
+                    </button>
                 </div>
             </div>`;
     },
 
-    selectTier(tierId) {
-        this.selectedTier = tierId;
-        const selector = document.getElementById('tier-selector');
-        if (selector) {
-            selector.innerHTML = this.renderTierCard('optimum') + this.renderTierCard('ultra');
-        }
-        if (this.pricingData) {
-            const p = this.pricingData.pricing || {};
-            const files = this.pricingData.files || [];
-            const trans = p.translation || {};
-            const pid = App.currentProject?.id;
-            if (pid) this.updateOrderSummary(pid, files, trans);
-        }
+    renderUploadPanel(pid, files, disabled) {
+        const hasFiles = files.length > 0;
+        return `
+            <div class="order-panel">
+                <div class="order-panel-head">
+                    <div>
+                        <div class="order-panel-title">${Icons.wrap('upload', 18)} Файли</div>
+                        <div class="order-panel-note">${hasFiles ? 'Можна додати ще документи до оплати.' : 'Завантажте документи, після цього зʼявиться точна ціна.'}</div>
+                    </div>
+                    <button class="btn btn-primary" ${disabled || this.uploading ? 'disabled' : ''} onclick="PricingView.pickFiles()">
+                        ${Icons.wrap('upload', 16)} ${hasFiles ? 'Додати' : 'Завантажити'}
+                    </button>
+                </div>
+                <div id="order-upload-progress" class="upload-inline-progress" style="display:none"></div>
+                ${hasFiles ? `
+                    <div class="order-file-list">
+                        ${files.map(f => `
+                            <div class="order-file-row">
+                                <div>
+                                    <div class="file-name">${App.esc(f.name)}</div>
+                                    <div class="file-stats">
+                                        ${this.renderPreflightBadge(f)}
+                                        ${(f.billable_chars || f.chars || 0).toLocaleString()} розрахункових символів · ${f.units || 0} × 1800
+                                    </div>
+                                    <div class="file-preflight-note">${App.esc(f.preflight_note || '')}</div>
+                                </div>
+                                <div class="file-price">€${App.fmtEuro(f.price_cents || 0)}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="order-actions split">
+                        <button class="btn btn-secondary" ${disabled ? 'disabled' : ''} onclick="PricingView.goStep(1)">
+                            ${Icons.wrap('back', 16)} Мови
+                        </button>
+                        <button class="btn btn-primary" ${disabled ? 'disabled' : ''} onclick="PricingView.goStep(3)">
+                            ${Icons.wrap('forward', 16)} До розрахунку
+                        </button>
+                    </div>
+                ` : `
+                    <button class="order-upload-empty" ${disabled || this.uploading ? 'disabled' : ''} onclick="PricingView.pickFiles()">
+                        ${Icons.wrap('upload', 22)}
+                        <span>Завантажити документи</span>
+                    </button>
+                    <div class="order-actions split">
+                        <button class="btn btn-secondary" ${disabled ? 'disabled' : ''} onclick="PricingView.goStep(1)">
+                            ${Icons.wrap('back', 16)} Мови
+                        </button>
+                    </div>
+                `}
+            </div>`;
     },
 
-    updateOrderSummary(pid, files, trans) {
-        const container = document.getElementById('order-summary-container');
-        if (!container) return;
-
-        const tier = TIERS[this.selectedTier];
-        const tierData = trans[this.selectedTier] || {};
-        const totalCents = tierData.total_cents || 0;
-        const perPage = tierData.per_page_cents || tier.priceCents;
-
-        let fileRows = '';
-        if (files.length > 0) {
-            fileRows = files.map(f => {
-                const pages = f.pages || Math.ceil((f.chars || 0) / 1800) || 1;
-                const price = pages * perPage;
-                return `
-                    <div class="order-file-row">
-                        <div class="file-name">\ud83d\udcc4 ${App.esc(f.name)}</div>
-                        <div class="file-stats">${f.pages ? f.pages + ' стор.' : f.chars ? f.chars.toLocaleString() + ' сим.' : ''}</div>
-                        <div class="file-price">\u20ac${App.fmtEuro(price)}</div>
-                    </div>`;
-            }).join('');
-        }
-
-        container.innerHTML = `
-            <div class="card order-summary">
-                <div class="card-title" style="margin-bottom:12px">Ваше замовлення \u00b7 ${tier.name}</div>
-                ${fileRows}
-                <div class="order-total">
-                    <span>Разом</span>
-                    <span>\u20ac${App.fmtEuro(totalCents)}</span>
+    renderSummary(pid, pricing, files, targets, isProcessing, isCompleted) {
+        const total = pricing.total_price_cents || 0;
+        const paid = pricing.paid_translation_cents || 0;
+        const due = pricing.due_translation_cents ?? total;
+        const targetCount = pricing.target_language_count || targets.length || 1;
+        const glossary = pricing.uses_glossary;
+        const hasBlockingFiles = files.some(f => f.supported === false);
+        const jobCount = files.length * targetCount;
+        return `
+            <div class="order-panel order-summary-panel">
+                <div class="order-panel-head">
+                    <div>
+                        <div class="order-panel-title">${Icons.wrap('pricing', 18)} Розрахунок</div>
+                        <div class="order-panel-note">${files.length} файл(ів) · ${targetCount} мов(и) перекладу · ${jobCount} задач(і) · ${glossary ? 'глосарій увімкнено' : 'без глосарію'}</div>
+                    </div>
                 </div>
-                ${totalCents > 0 ? `
-                    <button class="btn-order" onclick="PricingView.orderTranslation(${pid})">
-                        Замовити переклад \u2014 \u20ac${App.fmtEuro(totalCents)}
-                    </button>
-                    <p style="color:var(--hint);text-align:center;padding:12px 0 0;font-size:12px;line-height:1.5">
-                        Після оплати ваші документи будуть перекладені з використанням затвердженого глосарію.
-                        Спеціаліст перевірить якість перед відправкою.
-                    </p>
+                <label class="glossary-toggle">
+                    <input type="checkbox"
+                        ${glossary ? 'checked' : ''}
+                        ${isProcessing || isCompleted || !pricing.glossary_available ? 'disabled' : ''}
+                        onchange="PricingView.toggleGlossary(this.checked)">
+                    <span>
+                        <strong>Використовувати глосарій</strong>
+                        <small>${pricing.glossary_available ? 'Терміни будуть узгоджені з вашим словником.' : 'Глосарій ще не налаштовано адміністратором.'}</small>
+                    </span>
+                </label>
+                <div class="rate-grid">
+                    ${files.map(f => `
+                        <div class="rate-row">
+                            <span>${App.esc(f.name)}</span>
+                            <span>${(f.billable_chars || f.chars || 0).toLocaleString()} сим.</span>
+                            <span>€${App.fmtEuro(f.rate_cents || 0)} / 1800</span>
+                            <strong>€${App.fmtEuro(f.total_cents || f.price_cents || 0)}</strong>
+                        </div>
+                    `).join('')}
+                </div>
+                ${hasBlockingFiles ? `<div class="order-warning">Один або кілька файлів потребують перевірки адміністратором перед оплатою.</div>` : ''}
+                <div class="order-total">
+                    <span>Вартість перекладу</span>
+                    <span>€${App.fmtEuro(total)}</span>
+                </div>
+                ${paid > 0 ? `
+                    <div class="order-total secondary">
+                        <span>Вже оплачено</span>
+                        <span>€${App.fmtEuro(Math.min(paid, total))}</span>
+                    </div>` : ''}
+                <div class="order-total due">
+                    <span>До сплати зараз</span>
+                    <span>€${App.fmtEuro(Math.max(0, due))}</span>
+                </div>
+                ${!isProcessing && !isCompleted ? `
+                    <div class="order-actions split">
+                        <button class="btn btn-secondary" onclick="PricingView.goStep(2)">
+                            ${Icons.wrap('back', 16)} Файли
+                        </button>
+                        <button class="btn-order" ${due <= 0 || hasBlockingFiles ? 'disabled' : ''} onclick="PricingView.pay(${pid})">
+                            ${Icons.wrap('pricing', 18)} Сплатити €${App.fmtEuro(Math.max(0, due))}
+                        </button>
+                    </div>
                 ` : ''}
             </div>`;
     },
 
-    renderWaiting(container, stage) {
-        const messages = {
-            'glossary_paid': 'Глосарій оплачено. Спеціаліст вже працює над вашою термінологією.',
-            'glossary_review': 'Глосарій на перевірці. Перегляньте терміни у вкладці "Глосарій".',
+    renderProcessingState(data, files, targets) {
+        const jobs = data.jobs || [];
+        const s = data.translation_status || {};
+        const expected = s.expected_jobs || Math.max(1, files.length * Math.max(1, targets.length));
+        const completed = s.completed_jobs || 0;
+        const active = s.active_jobs || 0;
+        const review = s.review_jobs || 0;
+        const progress = Number.isFinite(s.progress_percent)
+            ? Math.max(0, Math.min(100, Math.round(s.progress_percent)))
+            : Math.max(0, Math.min(100, Math.round((completed / Math.max(1, expected)) * 100)));
+        const processText = this.processingText(completed, expected, active, review, s);
+        return `
+            <div class="order-panel status-panel">
+                <div class="status-icon">${Icons.wrap('clock', 34)}</div>
+                <div>
+                    <div class="status-title">${processText.title}</div>
+                    <div class="status-text">${processText.body}</div>
+                </div>
+            </div>
+            <div class="order-panel">
+                <div class="order-panel-head">
+                    <div>
+                        <div class="order-panel-title">${Icons.wrap('clock', 18)} Статус файлів</div>
+                        <div class="order-panel-note">${completed}/${expected} готово · ${processText.short}</div>
+                    </div>
+                    <div class="job-percent">${progress}%</div>
+                </div>
+                <div class="job-progress"><span style="width:${progress}%"></span></div>
+                <div class="job-progress-breakdown">
+                    ${this.renderProgressChip('У черзі', s.pending_jobs || 0)}
+                    ${this.renderProgressChip('В роботі', s.processing_jobs || 0)}
+                    ${this.renderProgressChip('Очікує', (s.waiting_credit_jobs || 0) + (s.external_pending_jobs || 0))}
+                    ${this.renderProgressChip('Готово', completed)}
+                    ${review ? this.renderProgressChip('Перевірка', review, 'warning') : ''}
+                </div>
+                <div class="job-list">
+                    ${jobs.length ? jobs.map(job => this.renderJobRow(job)).join('') : this.renderPendingJobRows(files, targets)}
+                </div>
+            </div>`;
+    },
+
+    renderProgressChip(label, value, tone = '') {
+        return `<span class="progress-chip ${tone}"><strong>${value}</strong>${App.esc(label)}</span>`;
+    },
+
+    processingText(completed, expected, active, review, status = {}) {
+        if (review > 0) {
+            return {
+                title: 'Потрібна перевірка',
+                short: 'є файл на перевірці',
+                body: 'Частина роботи потребує уваги спеціаліста. Ви отримаєте повідомлення, щойно файл буде готовий.'
+            };
+        }
+        if ((status.waiting_credit_jobs || 0) > 0) {
+            return {
+                title: 'Очікуємо поповнення балансу',
+                short: 'пауза через баланс сервісу',
+                body: 'Замовлення збережено в черзі. Адміністратор отримав сповіщення, система повторить спробу автоматично.'
+            };
+        }
+        if ((status.external_pending_jobs || 0) > 0) {
+            return {
+                title: 'Очікуємо завершення у провайдера',
+                short: 'перевіряємо зовнішній статус',
+                body: 'Частина файлів уже передана сервісу перекладу. Система автоматично підхопить результат, щойно він буде доступний.'
+            };
+        }
+        if (completed >= expected && expected > 0) {
+            return {
+                title: 'Переклад завершено',
+                short: 'усі файли готові',
+                body: 'Готові файли можна переглянути і скачати в застосунку.'
+            };
+        }
+        if (completed > 0) {
+            return {
+                title: 'Переклад триває',
+                short: 'частина файлів готова',
+                body: 'Готові файли вже зберігаються, решта ще перекладається. Telegram повідомить, коли буде завершено все замовлення.'
+            };
+        }
+        if (active > 0) {
+            return {
+                title: 'Файли перекладаються',
+                short: 'робота в процесі',
+                body: 'Система обробляє завантажені документи. Сторінку можна закрити: готові файли прийдуть у Telegram і залишаться в застосунку.'
+            };
+        }
+        return {
+            title: 'Переклад у черзі',
+            short: 'очікує старту',
+            body: 'Замовлення прийнято після оплати. Підготовка файлів до перекладу почнеться автоматично.'
         };
-        container.innerHTML = `
-            <div class="card">
-                <div class="empty-state" style="padding:32px 16px">
-                    <div class="empty-state-icon">\u23f3</div>
-                    <p class="empty-state-title">${messages[stage] || 'Очікуйте...'}</p>
-                    <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="App.navigate(2)">Переглянути глосарій</button>
+    },
+
+    renderCompletedState(data) {
+        const jobs = (data.jobs || []).filter(j => j.status === 'completed');
+        const failed = data.translation_status?.failed_jobs || 0;
+        return `
+            <div class="order-panel status-panel">
+                <div class="status-icon ${failed ? 'warning' : 'success'}">${Icons.wrap(failed ? 'warning' : 'success', 34)}</div>
+                <div>
+                    <div class="status-title">${failed ? 'Завершено з перевіркою' : 'Файли готові'}</div>
+                    <div class="status-text">${failed ? 'Готові переклади доступні, частина файлів потребує уваги адміністратора.' : 'Переклади доступні для перегляду і скачування.'}</div>
+                    <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="App.navigate('files')">
+                        ${Icons.wrap('files', 16)} Відкрити файли
+                    </button>
+                </div>
+            </div>
+            ${jobs.length ? `
+                <div class="order-panel">
+                    <div class="order-panel-title">${Icons.wrap('files', 18)} Готові переклади</div>
+                    <div class="job-list ready">
+                        ${jobs.map(job => this.renderJobRow(job, true)).join('')}
+                    </div>
+                </div>` : ''}`;
+    },
+
+    renderPreflightBadge(file) {
+        const status = file.preflight_status || 'ready';
+        const label = status === 'ocr' ? 'OCR/скан' : status === 'review' ? 'Перевірка' : 'Готово';
+        return `<span class="preflight-badge ${status}">${label}</span>`;
+    },
+
+    renderJobRow(job, completedView = false) {
+        const safeResult = this.inlineArg(job.result_name || job.source_name || 'Переклад');
+        return `
+            <div class="job-row ${job.status}">
+                <div>
+                    <div class="job-title">${App.esc(job.source_name || 'Файл')}</div>
+                    <div class="job-meta">${App.esc(job.target_lang || '')}</div>
+                </div>
+                <div class="job-actions">
+                    <span class="job-status ${job.status}">${App.esc(job.label || 'У роботі')}</span>
+                    ${completedView && job.can_compare ? `
+                        <button class="btn btn-secondary btn-sm" onclick="FilesView.previewFile(${App.currentProject.id}, ${job.result_file_id}, '${safeResult}')">
+                            ${Icons.wrap('eye', 14)} Переглянути
+                        </button>
+                        <button class="btn btn-primary btn-sm" onclick="FilesView.downloadFile(${App.currentProject.id}, ${job.result_file_id}, '${safeResult}')">
+                            ${Icons.wrap('download', 14)} Скачати
+                        </button>
+                    ` : ''}
                 </div>
             </div>`;
     },
 
-    renderCompleted(container) {
-        container.innerHTML = `
-            <div class="card">
-                <div class="empty-state" style="padding:32px 16px">
-                    <div class="empty-state-icon">\u2705</div>
-                    <p class="empty-state-title">Переклад завершено</p>
-                    <p class="empty-state-text">Всі документи перекладено та перевірено. Перегляньте результати у вкладці "Файли".</p>
-                    <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="App.navigate(1)">Переглянути файли</button>
-                </div>
-            </div>`;
+    renderPendingJobRows(files, targets) {
+        const rows = [];
+        files.forEach(file => targets.forEach(target => {
+            rows.push(`
+                <div class="job-row processing">
+                    <div>
+                        <div class="job-title">${App.esc(file.name || 'Файл')}</div>
+                        <div class="job-meta">${App.esc(target)}</div>
+                    </div>
+                    <span class="job-status processing">У черзі</span>
+                </div>`);
+        }));
+        return rows.join('');
     },
 
-    // ─── Order Actions ───────────────────────────────────────────────────
-    async orderGlossary(pid) {
-        try {
-            const data = await API.createInvoice(pid, { type: 'glossary' });
-            if (data.payment_url) {
-                window.open(data.payment_url, '_blank');
-                App.toast('Переходимо до оплати...', 'info');
-            } else {
-                App.toast('Замовлення створено', 'success');
-            }
-            setTimeout(() => this.loadInvoices(pid), 1500);
-        } catch (e) { App.toast(e.message, 'error'); }
+    renderTargetChip(lang, targets, disabled) {
+        const removable = !disabled && targets.length > 1;
+        return `
+            <button class="target-chip${removable ? '' : ' locked'}" ${removable ? '' : 'disabled'} onclick="PricingView.removeTargetLanguage('${this.inlineArg(lang)}')" aria-label="Мова перекладу: ${App.esc(lang)}">
+                <span class="target-chip-main">
+                    <span class="language-flag" aria-hidden="true">${this.languageFlag(lang)}</span>
+                    <span>${App.esc(lang)}</span>
+                </span>
+                <span class="target-chip-status">${removable ? Icons.wrap('close', 14) : 'Додано'}</span>
+            </button>`;
     },
 
-    async orderTranslation(pid) {
-        try {
-            const data = await API.createInvoice(pid, { type: 'translation', tier: this.selectedTier });
-            if (data.payment_url) {
-                window.open(data.payment_url, '_blank');
-                App.toast('Переходимо до оплати...', 'info');
-            } else {
-                App.toast('Замовлення створено', 'success');
-            }
-            setTimeout(() => this.loadInvoices(pid), 1500);
-        } catch (e) { App.toast(e.message, 'error'); }
+    renderLanguageOptions(selected, valuesOverride = null) {
+        const seen = new Set();
+        const sourceValues = valuesOverride || [...this.orderLanguages, selected];
+        const values = sourceValues.filter(Boolean).filter(v => {
+            if (seen.has(v)) return false;
+            seen.add(v);
+            return true;
+        });
+        return values.map(lang => `<option value="${App.esc(lang)}"${lang === selected ? ' selected' : ''}>${this.languageFlag(lang)} ${App.esc(lang)}</option>`).join('');
     },
 
-    // ─── Invoice History ─────────────────────────────────────────────────
-    async loadInvoices(pid) {
-        const section = document.getElementById('invoices-section');
-        if (!section) return;
-        try {
-            const data = await API.getInvoices(pid);
-            const invoices = data.invoices || [];
-            if (!invoices.length) { section.innerHTML = ''; return; }
+    languageFlag(lang) {
+        return LANGUAGE_FLAGS[String(lang || '').trim()] || '🏳️';
+    },
 
-            section.innerHTML = `
-                <div class="card">
-                    <div class="card-title" style="margin-bottom:12px">Історія замовлень</div>
-                    ${invoices.map(inv => `
-                        <div class="invoice-card ${inv.status === 'paid' ? 'paid' : 'pending'}">
-                            <div class="invoice-icon">${this.statusIcon(inv.status)}</div>
-                            <div class="invoice-details">
-                                <div class="invoice-amount">\u20ac${App.fmtEuro(inv.amount_cents)}</div>
-                                <div class="invoice-meta">
-                                    ${this.invoiceTypeLabel(inv.invoice_type, inv.translation_tier)}
-                                    \u00b7 ${this.statusLabel(inv.status)}
-                                    ${inv.created_at ? ' \u00b7 ' + App.fmtDate(inv.created_at) : ''}
-                                </div>
-                            </div>
-                            ${inv.status === 'pending' && inv.payment_url ? '<a href="' + App.esc(inv.payment_url) + '" target="_blank" class="invoice-action">Сплатити</a>' : ''}
-                        </div>
-                    `).join('')}
-                </div>`;
+    inlineArg(value) {
+        return App.esc(String(value || ''))
+            .replace(/\\/g, '\\\\')
+            .replace(/\r?\n/g, ' ')
+            .replace(/'/g, "\\'");
+    },
+
+    firstAvailableTarget(source, targets) {
+        return this.availableTargetLanguages(source, targets)[0] || 'English';
+    },
+
+    availableTargetLanguages(source, targets) {
+        const selected = new Set(targets);
+        return this.orderLanguages.filter(lang => lang !== source && !selected.has(lang));
+    },
+
+    targetLanguages(raw) {
+        const list = String(raw || '').split(',').map(s => s.trim()).filter(Boolean);
+        return list.length ? list : ['Ukrainian'];
+    },
+
+    currentTargets() {
+        const raw = App.currentProject?.target_lang || this.pricingData?.pricing?.target_lang || 'Ukrainian';
+        return this.targetLanguages(raw);
+    },
+
+    async loadOptions() {
+        if (this.optionsLoaded) return;
+        this.optionsLoaded = true;
+        try {
+            const data = await API.getTranslationOptions();
+            const languages = Array.isArray(data.languages) ? data.languages.filter(Boolean) : [];
+            if (languages.length) this.orderLanguages = languages;
         } catch (e) {
-            section.innerHTML = '';
+            this.orderLanguages = ORDER_LANGUAGES;
         }
     },
 
-    statusIcon(s) {
-        return { pending: '\u23f3', paid: '\u2705', manual_review: '\ud83d\udcdd' }[s] || '\u2753';
-    },
-
-    statusLabel(s) {
-        return { pending: 'Очікує оплати', paid: 'Сплачено', manual_review: 'На перевірці' }[s] || s;
-    },
-
-    invoiceTypeLabel(type, tier) {
-        if (type === 'translation' && tier) {
-            return TIERS[tier] ? TIERS[tier].name : tier;
+    goStep(step) {
+        this.activeStep = step;
+        if (this.pricingData && App.currentProject) {
+            const container = document.getElementById('pricing-content');
+            if (container) this.renderOrder(container, App.currentProject.id, this.pricingData);
         }
-        if (type === 'glossary') return 'Глосарій';
-        return 'Замовлення';
+    },
+
+    async saveLanguages() {
+        if (!App.currentProject) return;
+        const source = document.getElementById('order-source-lang')?.value || App.currentProject.source_lang || 'German';
+        let targets = this.currentTargets().filter(t => t !== source);
+        if (!targets.length) targets = [this.firstAvailableTarget(source, [])];
+        await this.persistLanguages(source, targets);
+    },
+
+    async addTargetLanguage() {
+        if (!App.currentProject) return;
+        const source = document.getElementById('order-source-lang')?.value || App.currentProject.source_lang || 'German';
+        const next = document.getElementById('order-target-add')?.value;
+        if (!next || next === source) {
+            App.toast('Оберіть іншу мову перекладу', 'warning');
+            return;
+        }
+        const targets = this.currentTargets();
+        if (!targets.includes(next)) targets.push(next);
+        await this.persistLanguages(source, targets);
+    },
+
+    async removeTargetLanguage(lang) {
+        if (!App.currentProject) return;
+        const targets = this.currentTargets().filter(t => t !== lang);
+        if (!targets.length) return;
+        const source = document.getElementById('order-source-lang')?.value || App.currentProject.source_lang || 'German';
+        await this.persistLanguages(source, targets);
+    },
+
+    async persistLanguages(source, targets) {
+        try {
+            const targetLang = targets.join(', ');
+            await API.updateProject(App.currentProject.id, { source_lang: source, target_lang: targetLang });
+            App.currentProject.source_lang = source;
+            App.currentProject.target_lang = targetLang;
+            this.loadPricing(App.currentProject.id);
+        } catch (e) {
+            App.toast(e.message, 'error');
+        }
+    },
+
+    async toggleGlossary(enabled) {
+        if (!App.currentProject) return;
+        try {
+            await API.updateProject(App.currentProject.id, { use_glossary: !!enabled });
+            App.currentProject.use_glossary = !!enabled;
+            await this.loadPricing(App.currentProject.id);
+        } catch (e) {
+            App.toast(e.message, 'error');
+            await this.loadPricing(App.currentProject.id);
+        }
+    },
+
+    pickFiles() {
+        const input = document.getElementById('pricing-file-input');
+        if (input) input.click();
+    },
+
+    async handleFilesSelected(files) {
+        if (!files || !files.length || !App.currentProject) return;
+        this.uploading = true;
+        this.lastUploadState = null;
+        const progress = document.getElementById('order-upload-progress');
+        if (progress) {
+            progress.style.display = '';
+            progress.innerHTML = this.uploadProgressHtml({
+                total: files.length,
+                completed: 0,
+                failed: 0,
+                phaseLabel: 'Готуємо файли до завантаження',
+                aggregatePercent: 0,
+                files: Array.from(files).map((file, index) => ({
+                    index,
+                    name: file.name || ('file-' + (index + 1)),
+                    size: file.size || 0,
+                    status: 'queued',
+                    phase: 'У черзі',
+                    uploadPercent: 0,
+                    error: ''
+                }))
+            });
+        }
+        try {
+            const results = await API.uploadFiles(App.currentProject.id, Array.from(files), 'source', (state) => {
+                this.lastUploadState = state;
+                if (progress) progress.innerHTML = this.uploadProgressHtml(state);
+            });
+            const failed = results.filter(r => r && r.error);
+            if (failed.length) {
+                throw new Error((failed[0].file ? failed[0].file + ': ' : '') + (failed[0].error || 'Не вдалося завантажити файл'));
+            }
+            App.toast('Файли завантажено', 'success');
+            this.activeStep = 3;
+            if (progress) {
+                const state = this.lastUploadState || {};
+                progress.innerHTML = this.uploadProgressHtml({
+                    ...state,
+                    total: files.length,
+                    completed: files.length,
+                    failed: 0,
+                    phaseLabel: 'Розрахунок готовий',
+                    aggregatePercent: 100
+                });
+            }
+            await this.loadPricing(App.currentProject.id);
+        } catch (e) {
+            App.toast(e.message, 'error');
+        } finally {
+            this.uploading = false;
+            const input = document.getElementById('pricing-file-input');
+            if (input) input.value = '';
+        }
+    },
+
+    uploadProgressHtml(stateOrDone, total, label) {
+        if (typeof stateOrDone === 'number') {
+            const done = stateOrDone;
+            const safeTotal = Math.max(1, total || 1);
+            const pct = Math.max(0, Math.min(100, Math.round((done / safeTotal) * 100)));
+            const fileWord = safeTotal === 1 ? 'файл' : 'файлів';
+            return `
+                <div class="upload-progress-top">
+                    <strong>${App.esc(label || 'Завантаження')}</strong>
+                    <span>${done}/${safeTotal} ${fileWord}</span>
+                </div>
+                <div class="job-progress upload-progress-bar"><span style="width:${pct}%"></span></div>`;
+        }
+
+        const state = stateOrDone || {};
+        const files = state.files || [];
+        const safeTotal = Math.max(1, state.total || files.length || 1);
+        const done = state.completed || 0;
+        const failed = state.failed || 0;
+        const pct = Math.max(0, Math.min(100, Math.round(state.aggregatePercent || 0)));
+        const fileWord = safeTotal === 1 ? 'файл' : 'файлів';
+        const active = state.activeFileName ? ` · ${state.activeFileName}` : '';
+        return `
+            <div class="upload-progress-top">
+                <strong>${App.esc((state.phaseLabel || 'Обробка') + active)}</strong>
+                <span>${done}/${safeTotal} ${fileWord}${failed ? ' · ' + failed + ' пом.' : ''}</span>
+            </div>
+            <div class="job-progress upload-progress-bar"><span style="width:${pct}%"></span></div>
+            <div class="upload-file-progress-list">
+                ${files.map(file => this.uploadFileRow(file)).join('')}
+            </div>`;
+    },
+
+    uploadFileRow(file) {
+        const pct = Math.max(0, Math.min(100, Math.round(file.uploadPercent || 0)));
+        const status = file.status || 'queued';
+        const phase = file.error || file.phase || this.uploadPhaseLabel(status);
+        return `
+            <div class="upload-file-progress-row ${status}">
+                <div class="upload-file-progress-main">
+                    <div class="upload-file-progress-name">${App.esc(file.name || 'Файл')}</div>
+                    <div class="upload-file-progress-phase">${App.esc(phase)}${file.size ? ' · ' + App.fmtSize(file.size) : ''}</div>
+                    <div class="upload-file-progress-mini"><span style="width:${status === 'done' || status === 'error' ? 100 : pct}%"></span></div>
+                </div>
+                <span class="upload-file-progress-badge">${this.uploadPhaseLabel(status, pct)}</span>
+            </div>`;
+    },
+
+    uploadPhaseLabel(status, pct = 0) {
+        const map = {
+            queued: 'Черга',
+            uploading: pct + '%',
+            analyzing: 'Підрахунок',
+            done: 'Готово',
+            error: 'Помилка'
+        };
+        return map[status] || 'Обробка';
+    },
+
+    async pay(pid) {
+        try {
+            const targetLang = this.currentTargets().join(', ');
+            const data = await API.createInvoice(pid, { type: 'translation', target_lang: targetLang });
+            if (data.payment_url) {
+                window.open(data.payment_url, '_blank');
+                App.toast('Відкрито сторінку оплати', 'info');
+            } else {
+                App.toast('Рахунок створено', 'success');
+            }
+        } catch (e) {
+            App.toast(e.message, 'error');
+        }
+    },
+
+    startStatusPolling(pid) {
+        if (this.pollTimer) return;
+        this.pollTimer = setInterval(() => {
+            if (App.currentView !== 'pricing' || !App.currentProject || App.currentProject.id !== pid) {
+                this.stopStatusPolling();
+                return;
+            }
+            this.loadPricing(pid, true);
+        }, 10000);
+    },
+
+    stopStatusPolling() {
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+        }
+    },
+
+    openSupportModal() {
+        if (!App.currentProject) return;
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal">
+                <h3>${Icons.wrap('comment', 20)} Повідомити про проблему</h3>
+                <textarea id="support-message" class="form-textarea" rows="5" maxlength="1500" placeholder="Напишіть, що сталося"></textarea>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Скасувати</button>
+                    <button class="btn btn-primary" onclick="PricingView.sendSupportMessage(this)">${Icons.wrap('send', 16)} Надіслати</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.classList.add('visible'));
+        setTimeout(() => document.getElementById('support-message')?.focus(), 50);
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) overlay.remove();
+        });
+    },
+
+    async sendSupportMessage(btn) {
+        const textarea = document.getElementById('support-message');
+        const text = (textarea?.value || '').trim();
+        if (!text) {
+            App.toast('Опишіть проблему', 'warning');
+            return;
+        }
+        btn.disabled = true;
+        try {
+            await API.sendMessage(App.currentProject.id, 'Проблема із замовленням: ' + text);
+            btn.closest('.modal-overlay')?.remove();
+            App.toast('Повідомлення надіслано адміністратору', 'success');
+        } catch (e) {
+            btn.disabled = false;
+            App.toast(e.message, 'error');
+        }
     }
 };

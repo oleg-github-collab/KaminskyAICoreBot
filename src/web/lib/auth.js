@@ -1,5 +1,6 @@
 const Auth = {
     SESSION_KEY: 'ki_session_token',
+    currentUser: null,
 
     getToken() {
         return localStorage.getItem(this.SESSION_KEY) || '';
@@ -57,13 +58,15 @@ const Auth = {
         if (!token) return false;
 
         try {
-            const response = await fetch('/api/auth/verify', {
+            const response = await fetch((window.APP_BASE_PATH || '') + '/api/auth/verify', {
                 headers: { 'Authorization': 'Bearer ' + token }
             });
             const data = await response.json();
+            this.currentUser = data.valid ? (data.user || { id: data.user_id }) : null;
             return data.valid === true;
         } catch (e) {
             console.error('Session verification failed:', e);
+            this.currentUser = null;
             return false;
         }
     },
@@ -81,14 +84,16 @@ const Auth = {
             this.setToken(sessionToken);
             // Remove token from URL
             window.history.replaceState({}, document.title, window.location.pathname);
-            return true;
+            const verified = await this.verifySession();
+            if (verified) return true;
+            this.clearToken();
         }
 
         // Verify existing session
         const hasValidSession = await this.verifySession();
         if (!hasValidSession) {
             // Redirect to login
-            window.location.href = '/login';
+            window.location.href = (window.APP_BASE_PATH || '') + '/login';
             return false;
         }
 
@@ -98,7 +103,7 @@ const Auth = {
     logout() {
         this.clearToken();
         if (this.isWebBrowser()) {
-            window.location.href = '/login';
+            window.location.href = (window.APP_BASE_PATH || '') + '/login';
         } else {
             window.location.reload();
         }

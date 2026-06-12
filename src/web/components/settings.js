@@ -1,11 +1,12 @@
 const SettingsView = {
     async render(c, project) {
         if (!project) {
-            c.innerHTML = '<div class="empty-state"><div class="empty-state-icon">' + Icons.wrap('settings', 48) + '</div><p class="empty-state-title">Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
+            c.innerHTML = '<div class="empty"><div class="empty-icon">\u2699\ufe0f</div><p>Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
             return;
         }
         c.innerHTML = `
             <div class="section-header">
+                <button class="back-btn" onclick="App.backToProjects()">\u2190</button>
                 <h2>${App.esc(project.name)} \u2014 Налаштування</h2>
             </div>
             <div id="settings-form"><div class="loading">Завантаження...</div></div>`;

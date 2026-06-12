@@ -8,7 +8,7 @@ const InstructionsView = {
 
     async render(container, project) {
         if (!project) {
-            container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">' + Icons.wrap('instructions', 48) + '</div><p class="empty-state-title">Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
+            container.innerHTML = '<div class="empty"><div class="empty-icon">📝</div><p>Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
             return;
         }
 
@@ -17,6 +17,7 @@ const InstructionsView = {
         container.innerHTML = `
             <div class="instructions-container">
                 <div class="section-header">
+                    <button class="back-btn" onclick="App.backToProjects()">\u2190</button>
                     <h2>Інструкції для промптів</h2>
                     <div class="section-actions">
                         <button class="btn btn-sm btn-secondary" onclick="InstructionsView.refresh()" data-tooltip="Оновити">

@@ -15,6 +15,9 @@ const migrations = [_]struct { version: i32, sql: []const u8 }{
     .{ .version = 11, .sql = @embedFile("../sql/011_document_content.sql") },
     .{ .version = 12, .sql = @embedFile("../sql/012_comment_anchors.sql") },
     .{ .version = 13, .sql = @embedFile("../sql/013_workflow_engine.sql") },
+    .{ .version = 14, .sql = @embedFile("../sql/014_translation_audit.sql") },
+    .{ .version = 15, .sql = @embedFile("../sql/015_project_glossary_toggle.sql") },
+    .{ .version = 16, .sql = @embedFile("../sql/016_worker_reliability.sql") },
 };
 
 pub fn run(db: *sqlite.Db) !void {

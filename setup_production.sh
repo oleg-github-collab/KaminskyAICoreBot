@@ -39,14 +39,40 @@ read -p "OpenAI API Key (sk-...): " OPENAI_KEY
 
 read -p "DeepL API Key: " DEEPL_KEY
 
+read -p "O.Translator API Key: " OTRANSLATOR_KEY
+[[ -n "$OTRANSLATOR_KEY" ]] || fail "O.Translator API key is required"
+
+read -p "O.Translator model [gemini-3.1-thinking]: " OTRANSLATOR_MODEL
+OTRANSLATOR_MODEL="${OTRANSLATOR_MODEL:-gemini-3.1-thinking}"
+
+read -p "O.Translator glossary name [C-Sailor_Pro_Glossary_EN-UK-1]: " OTRANSLATOR_GLOSSARY_NAME
+OTRANSLATOR_GLOSSARY_NAME="${OTRANSLATOR_GLOSSARY_NAME:-C-Sailor_Pro_Glossary_EN-UK-1}"
+
 read -p "Stripe LIVE Secret Key (sk_live_...): " STRIPE_KEY
 [[ "$STRIPE_KEY" =~ ^sk_live_ ]] || fail "Must be a LIVE key (sk_live_...), not test!"
 
 ADMIN_ID="183844476"
 info "Admin Telegram ID: ${ADMIN_ID}"
 
+read -p "Allowed Telegram IDs, comma-separated or * for public [*]: " ALLOWED_TELEGRAM_IDS
+ALLOWED_TELEGRAM_IDS="${ALLOWED_TELEGRAM_IDS:-*}"
+
+info "Validating O.Translator model..."
+MODEL_RESP=$(curl -s -X POST "https://otranslator.com/api/v1/models" \
+  -H "Authorization: ${OTRANSLATOR_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{}')
+if echo "$MODEL_RESP" | grep -Fq "\"${OTRANSLATOR_MODEL}\""; then
+  ok "O.Translator model confirmed: ${OTRANSLATOR_MODEL}"
+else
+  warn "Could not confirm model '${OTRANSLATOR_MODEL}' in /models response."
+  warn "Response preview: $(echo "$MODEL_RESP" | head -c 300)"
+  fail "Set OTRANSLATOR_MODEL to an exact model id from the account."
+fi
+
 # Generate random webhook secret
 WEBHOOK_SECRET_TG=$(openssl rand -hex 16 2>/dev/null || head -c 32 /dev/urandom | xxd -p | head -c 32)
+INTERNAL_API_KEY=$(openssl rand -hex 24 2>/dev/null || head -c 48 /dev/urandom | xxd -p | head -c 48)
 info "Generated webhook secret: ${WEBHOOK_SECRET_TG:0:10}..."
 
 echo ""
@@ -72,6 +98,13 @@ railway variables set "ADMIN_CHAT_ID=${ADMIN_ID}" 2>/dev/null || true
 railway variables set "OPENAI_API_KEY=${OPENAI_KEY}" 2>/dev/null || true
 railway variables set "DEEPL_API_KEY=${DEEPL_KEY}" 2>/dev/null || true
 railway variables set "STRIPE_SECRET_KEY=${STRIPE_KEY}" 2>/dev/null || true
+railway variables set "OTRANSLATOR_API_KEY=${OTRANSLATOR_KEY}" 2>/dev/null || true
+railway variables set "OTRANSLATOR_MODEL=${OTRANSLATOR_MODEL}" 2>/dev/null || true
+railway variables set "OTRANSLATOR_VALIDATE_MODEL=1" 2>/dev/null || true
+railway variables set "OTRANSLATOR_GLOSSARY_NAME=${OTRANSLATOR_GLOSSARY_NAME}" 2>/dev/null || true
+railway variables set "ALLOWED_TELEGRAM_IDS=${ALLOWED_TELEGRAM_IDS}" 2>/dev/null || true
+railway variables set "INTERNAL_API_KEY=${INTERNAL_API_KEY}" 2>/dev/null || true
+railway variables set "PROCESSOR_URL=http://processor.railway.internal:5000" 2>/dev/null || true
 railway variables set "PORT=8080" 2>/dev/null || true
 railway variables set "DATA_DIR=/data" 2>/dev/null || true
 railway variables set "DB_PATH=/data/db/bot.db" 2>/dev/null || true

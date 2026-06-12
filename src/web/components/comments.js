@@ -101,6 +101,13 @@ const CommentsView = {
                 placeholder: 'Поясніть зміну...',
                 modules: { toolbar: [['bold', 'italic'], ['link']] }
             });
+        } else {
+            const expl = document.getElementById('suggestion-explanation');
+            if (expl) {
+                expl.className = 'cv-plain-editor';
+                expl.contentEditable = 'true';
+                expl.dataset.placeholder = 'Поясніть зміну...';
+            }
         }
 
         const ta = document.getElementById('suggestion-text');
@@ -137,6 +144,8 @@ const CommentsView = {
         if (explEl && window.Quill) {
             const q = Quill.find(explEl);
             if (q) explanation = q.root.innerHTML;
+        } else if (explEl) {
+            explanation = explEl.innerHTML || '';
         }
 
         try {
@@ -210,20 +219,31 @@ const CommentsView = {
     },
 
     initEditor() {
-        if (!window.Quill) return;
         const el = document.getElementById('comment-editor');
         if (!el) return;
-        this.quill = new Quill('#comment-editor', {
-            theme: 'snow',
-            placeholder: 'Напишіть коментар...',
-            modules: {
-                toolbar: [
-                    ['bold', 'italic', 'underline'],
-                    [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-                    ['link', 'code-block']
-                ]
-            }
-        });
+        if (window.Quill) {
+            this.quill = new Quill('#comment-editor', {
+                theme: 'snow',
+                placeholder: 'Напишіть коментар...',
+                modules: {
+                    toolbar: [
+                        ['bold', 'italic', 'underline'],
+                        [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                        ['link', 'code-block']
+                    ]
+                }
+            });
+        } else {
+            el.className = 'cv-plain-editor';
+            el.contentEditable = 'true';
+            el.dataset.placeholder = 'Напишіть коментар...';
+            this.quill = {
+                root: el,
+                getText() { return el.textContent || ''; },
+                setText(value) { el.textContent = value || ''; },
+                focus() { el.focus(); }
+            };
+        }
         this.quill.root.addEventListener('keydown', (e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
                 e.preventDefault();
@@ -265,6 +285,17 @@ const CommentsView = {
         return roots;
     },
 
+    sanitizeHtml(html) {
+        let s = String(html || '');
+        s = s.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+        s = s.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
+        s = s.replace(/\bon\w+\s*=\s*"[^"]*"/gi, '');
+        s = s.replace(/\bon\w+\s*=\s*'[^']*'/gi, '');
+        s = s.replace(/\bon\w+\s*=\s*[^\s>]+/gi, '');
+        s = s.replace(/javascript\s*:/gi, '');
+        return s;
+    },
+
     renderComment(comment, depth = 0) {
         const indent = depth * 12;
         const canReply = depth < 3;
@@ -277,7 +308,7 @@ const CommentsView = {
             else if (comment.suggestion_status === 'rejected') statusCls += ' cv-rejected';
         }
 
-        const content = comment.content_format === 'html' ? comment.content : App.esc(comment.content);
+        const content = comment.content_format === 'html' ? this.sanitizeHtml(comment.content) : App.esc(comment.content);
 
         // Quoted text badge (clickable to navigate)
         let quotedHtml = '';
@@ -393,16 +424,23 @@ const CommentsView = {
                 placeholder: 'Ваша відповідь...',
                 modules: { toolbar: [['bold', 'italic'], ['link']] }
             });
+        } else {
+            const reply = document.getElementById('reply-editor-' + parentId);
+            if (reply) {
+                reply.className = 'cv-plain-editor';
+                reply.contentEditable = 'true';
+                reply.dataset.placeholder = 'Ваша відповідь...';
+                reply.focus();
+            }
         }
     },
 
     async submitReply(parentId) {
         const el = document.querySelector('#reply-editor-' + parentId);
-        if (!el || !window.Quill) return;
-        const quill = Quill.find(el);
-        if (!quill) return;
-        const html = quill.root.innerHTML;
-        const text = quill.getText().trim();
+        if (!el) return;
+        const quill = window.Quill ? Quill.find(el) : null;
+        const html = quill ? quill.root.innerHTML : (el.innerHTML || '');
+        const text = quill ? quill.getText().trim() : (el.textContent || '').trim();
         if (!text) return;
 
         try {

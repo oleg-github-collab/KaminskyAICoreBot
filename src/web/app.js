@@ -11,6 +11,7 @@ const App = {
         if (typeof Auth !== 'undefined' && Auth.isWebBrowser()) {
             const isAuthed = await Auth.checkAuthAndRedirect();
             if (!isAuthed) return;
+            this.isAdmin = !!(Auth.currentUser && Auth.currentUser.is_admin);
         }
 
         if (this.tg && this.tg.initData) {
@@ -48,10 +49,6 @@ const App = {
         const menuIcon = document.getElementById('menu-icon');
         if (menuIcon) menuIcon.innerHTML = Icons.menu;
 
-        // Set FAB icon
-        const fabIcon = document.getElementById('fab-icon');
-        if (fabIcon) fabIcon.innerHTML = Icons.plus;
-
         this.navigate('projects');
         this.setupKeyboardShortcuts();
     },
@@ -65,129 +62,46 @@ const App = {
         document.addEventListener('keydown', (e) => {
             if (e.target.matches('input, textarea, [contenteditable="true"]')) return;
 
-            // Ctrl/Cmd + K → Focus search
-            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-                e.preventDefault();
-                const search = document.querySelector('.search-bar input, #glossary-search');
-                if (search) { search.focus(); search.select(); }
-            }
-
-            // Ctrl/Cmd + S → Export glossary
-            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                e.preventDefault();
-                if (this.currentView === 'glossary' && this.currentProject) {
-                    GlossaryView.exportTSV(this.currentProject.id);
-                }
-            }
-
-            // Ctrl/Cmd + A → Select all terms (in glossary view)
-            if ((e.ctrlKey || e.metaKey) && e.key === 'a' && this.currentView === 'glossary') {
-                e.preventDefault();
-                if (this.currentProject && GlossaryView.selectAll) GlossaryView.selectAll();
-            }
-
-            // Ctrl/Cmd + Z → Undo
-            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-                e.preventDefault();
-                if (this.currentView === 'glossary' && window.glossaryHistory) {
-                    const action = glossaryHistory.undo();
-                    if (action) this.toast('\u21b6 \u0421\u043a\u0430\u0441\u043e\u0432\u0430\u043d\u043e: ' + action.description, 'info');
-                }
-            }
-
-            // Ctrl/Cmd + Shift + Z → Redo
-            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z') {
-                e.preventDefault();
-                if (this.currentView === 'glossary' && window.glossaryHistory) {
-                    const action = glossaryHistory.redo();
-                    if (action) this.toast('\u21b7 \u041f\u043e\u0432\u0442\u043e\u0440\u0435\u043d\u043e: ' + action.description, 'info');
-                }
-            }
-
-            // Escape → Close modals / wizard / deselect
+            // Escape closes any open modal.
             if (e.key === 'Escape') {
-                // Close wizard first
-                if (typeof UploadWizard !== 'undefined' && UploadWizard._visible) {
-                    UploadWizard.close(); return;
-                }
                 const modals = document.querySelectorAll('.modal-overlay');
                 if (modals.length > 0) { modals.forEach(m => m.remove()); return; }
-                if (this.currentView === 'glossary' && GlossaryView.deselectAll) GlossaryView.deselectAll();
             }
 
-            // ? → Show keyboard shortcuts help
-            if (e.key === '?' && !e.shiftKey) { e.preventDefault(); this.showKeyboardHelp(); }
-
-            // Alt + 1-8 → Navigate between views
-            if (e.altKey && e.key >= '1' && e.key <= '8') {
+            // Alt + 1-7 switches between active screens.
+            if (e.altKey && e.key >= '1' && e.key <= '7') {
                 e.preventDefault();
-                const views = ['projects', 'files', 'glossary', 'instructions', 'pricing', 'versions', 'team', 'settings'];
+                const views = ['projects', 'pricing', 'files', 'team', 'guide', 'audit', 'admin'];
                 const index = parseInt(e.key) - 1;
                 if (views[index]) this.navigate(views[index]);
             }
         });
     },
 
-    showKeyboardHelp() {
-        const shortcuts = [
-            { keys: 'Ctrl+K', desc: '\u0424\u043e\u043a\u0443\u0441 \u043d\u0430 \u043f\u043e\u0448\u0443\u043a\u0443' },
-            { keys: 'Ctrl+S', desc: '\u0415\u043a\u0441\u043f\u043e\u0440\u0442 \u0433\u043b\u043e\u0441\u0430\u0440\u0456\u044e' },
-            { keys: 'Ctrl+A', desc: '\u041e\u0431\u0440\u0430\u0442\u0438 \u0432\u0441\u0456 \u0442\u0435\u0440\u043c\u0456\u043d\u0438' },
-            { keys: 'Ctrl+Z', desc: '\u0421\u043a\u0430\u0441\u0443\u0432\u0430\u0442\u0438 \u0434\u0456\u044e' },
-            { keys: 'Ctrl+Shift+Z', desc: '\u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0438 \u0434\u0456\u044e' },
-            { keys: 'Escape', desc: '\u0417\u0430\u043a\u0440\u0438\u0442\u0438 \u043c\u043e\u0434\u0430\u043b\u044c\u043d\u0435 \u0432\u0456\u043a\u043d\u043e' },
-            { keys: 'Alt+1-8', desc: '\u041f\u0435\u0440\u0435\u043c\u043a\u043d\u0443\u0442\u0438 \u0432\u043a\u043b\u0430\u0434\u043a\u0443' },
-            { keys: '?', desc: '\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u0438 \u0446\u044e \u0434\u043e\u0432\u0456\u0434\u043a\u0443' },
-        ];
-
-        const html = `
-            <div class="modal">
-                <h3>${Icons.wrap('info', 20)} \u0413\u0430\u0440\u044f\u0447\u0456 \u043a\u043b\u0430\u0432\u0456\u0448\u0456</h3>
-                <table style="width:100%;text-align:left;margin:16px 0">
-                    ${shortcuts.map(s => `
-                        <tr>
-                            <td style="padding:6px 12px;font-family:monospace;background:var(--bg-surface-2);border-radius:6px;white-space:nowrap;color:var(--text-primary)">
-                                ${this.esc(s.keys)}
-                            </td>
-                            <td style="padding:6px 12px;color:var(--text-secondary)">${this.esc(s.desc)}</td>
-                        </tr>
-                    `).join('')}
-                </table>
-                <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">\u0417\u0430\u043a\u0440\u0438\u0442\u0438</button>
-            </div>`;
-
-        const overlay = document.createElement('div');
-        overlay.className = 'modal-overlay';
-        overlay.innerHTML = html;
-        document.body.appendChild(overlay);
-        requestAnimationFrame(() => overlay.classList.add('visible'));
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) overlay.remove();
-        });
-    },
-
     navigate(view) {
         const prev = this.currentView;
+        if (prev === 'pricing' && view !== 'pricing' && typeof PricingView !== 'undefined' && PricingView.stopStatusPolling) {
+            PricingView.stopStatusPolling();
+        }
+        const allowedViews = ['projects', 'pricing', 'files', 'team', 'guide', 'audit'];
+        if (this.isAdmin) allowedViews.push('admin');
+        if (!allowedViews.includes(view)) view = 'projects';
         this.currentView = view;
 
         // Update sidebar + bottom nav active states
         SidebarView.setActive(view);
         this.updateBreadcrumb();
 
-        // Show/hide FAB (only in project context for files-related views)
-        this._updateFAB();
-
         const c = document.getElementById('content');
         const renderFn = () => {
             switch (view) {
                 case 'projects': ProjectsView.render(c); break;
                 case 'files': FilesView.render(c, this.currentProject); break;
-                case 'instructions': InstructionsView.render(c, this.currentProject); break;
-                case 'glossary': GlossaryView.render(c, this.currentProject); break;
-                case 'versions': GlossaryVersionsView.render(c, this.currentProject); break;
-                case 'settings': SettingsView.render(c, this.currentProject); break;
-                case 'team': TeamView.render(c, this.currentProject); break;
                 case 'pricing': PricingView.render(c, this.currentProject); break;
+                case 'team': TeamView.render(c, this.currentProject); break;
+                case 'guide': GuideView.render(c, this.currentProject); break;
+                case 'audit': AuditView.render(c, this.currentProject); break;
+                case 'admin': AdminView.render(c); break;
             }
         };
 
@@ -199,22 +113,9 @@ const App = {
         }
     },
 
-    _updateFAB() {
-        const fab = document.getElementById('fab-upload');
-        if (!fab) return;
-        const showFab = this.currentProject && ['files', 'glossary', 'instructions'].includes(this.currentView);
-        fab.style.display = showFab ? '' : 'none';
-    },
-
     selectProject(project) {
         this.currentProject = project;
-
-        if (window.RoleManager && window.RoleManager.setUser) {
-            const roleMap = { 'owner': 'owner', 'admin': 'admin', 'member': 'admin' };
-            window.RoleManager.setUser(null, roleMap[project.role] || 'admin');
-        }
-
-        this.navigate('files');
+        this.navigate('pricing');
     },
 
     updateBreadcrumb() {
@@ -226,7 +127,7 @@ const App = {
         let crumbs = [];
 
         if (this.currentProject) {
-            crumbs.push('<a href="#" onclick="App.backToProjects(); return false;">\u041f\u0440\u043e\u0454\u043a\u0442\u0438</a>');
+            crumbs.push('<a href="#" onclick="App.backToProjects(); return false;">\u0417\u0430\u043c\u043e\u0432\u043b\u0435\u043d\u043d\u044f</a>');
             crumbs.push('<span>' + this.esc(this.currentProject.name) + '</span>');
 
             if (projectInfo) {

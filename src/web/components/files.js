@@ -3,7 +3,7 @@ const FilesView = {
 
     async render(c, project) {
         if (!project) {
-            c.innerHTML = '<div class="empty-state"><div class="empty-state-icon">' + Icons.wrap('projects', 48) + '</div><p class="empty-state-title">\u041e\u0431\u0435\u0440\u0456\u0442\u044c \u043f\u0440\u043e\u0454\u043a\u0442</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">\u0414\u043e \u043f\u0440\u043e\u0454\u043a\u0442\u0456\u0432</button></div>';
+            c.innerHTML = '<div class="empty-state"><div class="empty-state-icon">' + Icons.wrap('projects', 48) + '</div><p class="empty-state-title">\u041e\u0431\u0435\u0440\u0456\u0442\u044c \u0437\u0430\u043c\u043e\u0432\u043b\u0435\u043d\u043d\u044f</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">\u0414\u043e \u0437\u0430\u043c\u043e\u0432\u043b\u0435\u043d\u044c</button></div>';
             return;
         }
         c.innerHTML = `
@@ -13,7 +13,6 @@ const FilesView = {
             <div class="tabs" id="file-tabs">
                 <button class="tab active" data-cat="all">\u0412\u0441\u0456</button>
                 <button class="tab" data-cat="source">\u0412\u0438\u0445\u0456\u0434\u043d\u0456</button>
-                <button class="tab" data-cat="reference">\u0420\u0435\u0444\u0435\u0440\u0435\u043d\u0441</button>
                 <button class="tab" data-cat="translated">\u041f\u0435\u0440\u0435\u043a\u043b\u0430\u0434\u0438</button>
             </div>
             <div id="files-stats"></div>
@@ -35,9 +34,17 @@ const FilesView = {
         const list = document.getElementById('files-list');
         const statsEl = document.getElementById('files-stats');
         if (!list) return;
+
+        // Cancel any in-flight request so rapid tab switches don't race.
+        if (this._filesAbort) this._filesAbort.abort();
+        const controller = new AbortController();
+        this._filesAbort = controller;
+
         try {
             const cat = this.category === 'all' ? null : this.category;
-            const data = await API.getFiles(pid, cat);
+            const data = await API.getFiles(pid, cat, controller.signal);
+            // A newer request superseded us — drop this stale response.
+            if (this._filesAbort !== controller) return;
             const files = data.files || [];
 
             if (statsEl && files.length) {
@@ -60,8 +67,7 @@ const FilesView = {
                 list.innerHTML = `<div class="empty-state" style="padding:32px">
                     <div class="empty-state-icon">${Icons.wrap('files', 48)}</div>
                     <p class="empty-state-title">${isFiltered ? '\u041d\u0435\u043c\u0430\u0454 \u0444\u0430\u0439\u043b\u0456\u0432 \u0443 \u0446\u0456\u0439 \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0456\u0457' : '\u041d\u0435\u043c\u0430\u0454 \u0444\u0430\u0439\u043b\u0456\u0432'}</p>
-                    <p class="empty-state-text">${isFiltered ? '\u0421\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0456\u043d\u0448\u0443 \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0456\u044e' : '\u041d\u0430\u0442\u0438\u0441\u043d\u0456\u0442\u044c + \u0449\u043e\u0431 \u0437\u0430\u0432\u0430\u043d\u0442\u0430\u0436\u0438\u0442\u0438 \u0444\u0430\u0439\u043b\u0438'}</p>
-                    <button class="btn btn-primary" style="margin-top:12px" onclick="UploadWizard.open()">${Icons.wrap('plus', 16)} \u0417\u0430\u0432\u0430\u043d\u0442\u0430\u0436\u0438\u0442\u0438</button>
+                    <p class="empty-state-text">${isFiltered ? '\u0421\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0456\u043d\u0448\u0443 \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0456\u044e' : '\u0417\u0430\u0432\u0430\u043d\u0442\u0430\u0436\u0442\u0435 \u043e\u0440\u0438\u0433\u0456\u043d\u0430\u043b\u0438 \u043d\u0430 \u0435\u043a\u0440\u0430\u043d\u0456 \u043e\u043f\u043b\u0430\u0442\u0438'}</p>
                 </div>`;
                 return;
             }
@@ -84,16 +90,16 @@ const FilesView = {
                     </div>
                     <div class="file-actions">
                         <button class="btn btn-icon btn-secondary"
-                                onclick="FileViewer.show(${pid}, ${f.id}, '${safeName}')"
-                                data-tooltip="\u041f\u0435\u0440\u0435\u0433\u043b\u044f\u043d\u0443\u0442\u0438">
+                                onclick="FilesView.previewFile(${pid}, ${f.id}, '${safeName}')"
+                                data-tooltip="\u041f\u0435\u0440\u0435\u0433\u043b\u044f\u0434 \u0456 \u043a\u043e\u043c\u0435\u043d\u0442\u0430\u0440\u0456">
                             ${Icons.wrap('eye', 16)}
                         </button>
                         ${f.category === 'translated' ? `
-                        <button class="btn btn-icon btn-secondary"
-                                onclick="FileViewer.showPair(${pid}, ${f.id}, '${safeName}')"
-                                data-tooltip="\u041f\u043e\u0440\u0456\u0432\u043d\u044f\u0442\u0438 \u0437 \u043e\u0440\u0438\u0433\u0456\u043d\u0430\u043b\u043e\u043c">
-                            ${Icons.wrap('compare', 16)}
-                        </button>` : ''}
+                            <button class="btn btn-icon btn-secondary"
+                                    onclick="FilesView.compareFile(${pid}, ${f.id}, '${safeName}')"
+                                    data-tooltip="\u041e\u0440\u0438\u0433\u0456\u043d\u0430\u043b / \u043f\u0435\u0440\u0435\u043a\u043b\u0430\u0434">
+                                ${Icons.wrap('compare', 16)}
+                            </button>` : ''}
                         <button class="btn btn-icon btn-secondary"
                                 onclick="FilesView.downloadFile(${pid},${f.id},'${safeName}')"
                                 data-tooltip="\u0421\u043a\u0430\u0447\u0430\u0442\u0438">
@@ -114,6 +120,8 @@ const FilesView = {
                 Transitions.staggerIn(list, '.file-item', 40);
             }
         } catch (e) {
+            // Aborted by a newer tab switch \u2014 ignore silently.
+            if (e.name === 'AbortError' || this._filesAbort !== controller) return;
             list.innerHTML = '<p style="color:var(--text-muted);padding:12px">\u041f\u043e\u043c\u0438\u043b\u043a\u0430: ' + App.esc(e.message) + '</p>';
         }
     },
@@ -140,6 +148,64 @@ const FilesView = {
         }
     },
 
+    async previewFile(pid, fid, name) {
+        if (typeof FileViewer !== 'undefined' && FileViewer.show) {
+            await FileViewer.show(pid, fid, name);
+            return;
+        }
+        await this.previewFileFallback(pid, fid, name);
+    },
+
+    async compareFile(pid, fid, name) {
+        if (typeof FileViewer !== 'undefined' && FileViewer.showPair) {
+            await FileViewer.showPair(pid, fid, name);
+            return;
+        }
+        App.toast('Порівняння недоступне', 'warning');
+    },
+
+    async previewFileFallback(pid, fid, name) {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal file-preview-modal">
+                <div class="file-preview-header">
+                    <div class="file-preview-title">${Icons.wrap('eye', 18)} <span>${App.esc(name)}</span></div>
+                    <button class="btn btn-icon btn-secondary" data-action="close" data-tooltip="Закрити">${Icons.wrap('close', 16)}</button>
+                </div>
+                <div class="file-preview-body"><div class="loading">Завантаження...</div></div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" data-action="close">Закрити</button>
+                    <button class="btn btn-primary" data-action="download">${Icons.wrap('download', 16)} Скачати</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.classList.add('visible'));
+
+        const close = () => overlay.remove();
+        overlay.querySelectorAll('[data-action="close"]').forEach(btn => btn.addEventListener('click', close));
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+        overlay.querySelector('[data-action="download"]')?.addEventListener('click', () => this.downloadFile(pid, fid, name));
+
+        const body = overlay.querySelector('.file-preview-body');
+        try {
+            const data = await API.getFileContent(pid, fid);
+            const content = data.content || '';
+            if (data.content_type === 'html') {
+                body.innerHTML = `<div class="doc-html">${content}</div>`;
+            } else {
+                body.innerHTML = `<pre class="file-preview-text">${App.esc(content)}</pre>`;
+            }
+        } catch (e) {
+            body.innerHTML = `
+                <div class="empty-state" style="padding:24px">
+                    <div class="empty-state-icon">${Icons.wrap('files', 40)}</div>
+                    <p class="empty-state-title">Не вдалося відкрити перегляд</p>
+                    <p class="empty-state-text">${App.esc(e.message)}</p>
+                </div>`;
+        }
+    },
+
     reviewClass(status) {
         const map = {
             'admin_review': 'review', 'admin_approved': 'approved', 'admin_edited': 'edited',
@@ -162,11 +228,11 @@ const FilesView = {
     },
 
     icon(cat) {
-        const map = { source: 'files', reference: 'glossary', glossary: 'glossary', translated: 'check' };
+        const map = { source: 'files', translated: 'check' };
         return Icons.wrap(map[cat] || 'files', 20);
     },
 
     categoryLabel(cat) {
-        return { source: '\u0412\u0438\u0445\u0456\u0434\u043d\u0438\u0439', reference: '\u0420\u0435\u0444\u0435\u0440\u0435\u043d\u0441', glossary: '\u0413\u043b\u043e\u0441\u0430\u0440\u0456\u0439', translated: '\u041f\u0435\u0440\u0435\u043a\u043b\u0430\u0434' }[cat] || cat;
+        return { source: '\u0412\u0438\u0445\u0456\u0434\u043d\u0438\u0439', translated: '\u041f\u0435\u0440\u0435\u043a\u043b\u0430\u0434' }[cat] || '\u0424\u0430\u0439\u043b';
     }
 };

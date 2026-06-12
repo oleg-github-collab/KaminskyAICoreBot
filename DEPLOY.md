@@ -1,96 +1,74 @@
-# Railway Deployment Guide
+# Hetzner Deployment Guide
 
-## Prerequisites
+Active production is Hetzner behind `kaminskyi.chat`, not Railway.
+
+Production URL:
+
 ```bash
-# Install Railway CLI
-brew install railway
-# OR
-npm i -g @railway/cli
-
-# Login
-railway login
+https://kaminskyi.chat/translatorbot/app
 ```
 
-## Step 1: Link Project
+Active compose directory:
+
 ```bash
-cd /Users/olehkaminskyi/Desktop/KaminskyAICoreBot
-railway link
+deploy/translatorbot
 ```
 
-## Step 2: Add Redis Service
+The compose file builds the current app from `deploy/translatorbot/repo` and exposes the app only on localhost:
+
 ```bash
-# In Railway dashboard or:
-railway service add redis
-# Use redis:7-alpine image
+127.0.0.1:3300 -> app:8080
 ```
 
-## Step 3: Set Environment Variables
+Nginx must proxy `/translatorbot/` to `127.0.0.1:3300`; see:
+
 ```bash
-# Set all secrets
-railway variables set BOT_TOKEN="your_telegram_bot_token"
-railway variables set ADMIN_CHAT_ID="183844476"
-railway variables set WEBHOOK_URL="https://your-app.railway.app/webhook"
-railway variables set MINI_APP_URL="https://your-app.railway.app/app"
-railway variables set DEEPL_API_KEY="your_deepl_key"
-railway variables set OPENAI_API_KEY="your_openai_key"
-railway variables set STRIPE_SECRET_KEY="your_stripe_key"
-railway variables set STRIPE_PUBLISHABLE_KEY="your_stripe_pub_key"
-railway variables set REDIS_URL="redis://redis.railway.internal:6379"
-railway variables set PORT="8080"
+deploy/translatorbot/nginx-location.conf
 ```
 
-## Step 4: Deploy
+## Required Environment
+
+Set these on the server in `deploy/translatorbot/.env`:
+
 ```bash
-# Push and deploy
-git push origin main
-railway up
+BOT_TOKEN=...
+ADMIN_CHAT_ID=183844476
+MINI_APP_URL=https://kaminskyi.chat/translatorbot/app
+WEBHOOK_URL=https://kaminskyi.chat/translatorbot/webhook
 
-# OR if railway.json exists:
-railway deploy
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+
+OTRANSLATOR_API_KEY=...
+OTRANSLATOR_MODEL=gemini-3.1-thinking
+OTRANSLATOR_VALIDATE_MODEL=1
+OTRANSLATOR_GLOSSARY_NAME=C-Sailor_Pro_Glossary_EN-UK-1
+
+ALLOWED_TELEGRAM_IDS=*
+PROCESSOR_URL=http://processor:5000
+DATA_DIR=/data
+DB_PATH=/data/db/bot.db
+ENVIRONMENT=production
 ```
 
-## Step 5: Verify Logs
+Production startup is fail-closed when Stripe secrets are missing.
+
+## Deploy
+
+From the repository root, after the server path is confirmed:
+
 ```bash
-# Watch logs in real-time
-railway logs --follow
-
-# Check health endpoint
-curl https://your-app.railway.app/health
+rsync -az --exclude='.git' --exclude='.env' --exclude='.zig-cache' --exclude='zig-out' ./ root@kaminskyi.chat:/opt/translatorbot/repo/
+ssh root@kaminskyi.chat 'cd /opt/translatorbot && docker compose build app processor && docker compose up -d'
 ```
 
-## Step 6: Test Features
+Verify:
+
 ```bash
-# Test Redis connection
-railway run redis-cli -h redis.railway.internal ping
-
-# Test Telegram webhook
-curl -X POST https://your-app.railway.app/webhook \
-  -H "Content-Type: application/json" \
-  -d '{"update_id": 1}'
-
-# Test web login
-open https://your-app.railway.app/login
+ssh root@kaminskyi.chat 'cd /opt/translatorbot && docker compose ps'
+curl -fsS https://kaminskyi.chat/translatorbot/health
 ```
 
-## Troubleshooting
-```bash
-# View service status
-railway status
+## Do Not Use For Current Production
 
-# SSH into container
-railway shell
-
-# Check environment variables
-railway variables
-
-# Restart service
-railway restart
-```
-
-## Expected Log Output
-```
-{"timestamp":1234567890,"level":"INFO","action":"server_start","port":8080}
-{"timestamp":1234567890,"level":"INFO","action":"redis_connected","url":"redis://redis.railway.internal:6379"}
-{"timestamp":1234567890,"level":"INFO","action":"db_migrated","version":10}
-{"timestamp":1234567890,"level":"INFO","action":"webhook_configured"}
-```
+Railway is not the active production target for this bot. Do not run `railway up` for the current `kaminskyi.chat/translatorbot` deployment unless the production target is intentionally changed.

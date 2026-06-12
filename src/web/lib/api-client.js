@@ -1,15 +1,28 @@
+const APP_BASE_PATH = (() => {
+    const explicit = (typeof window !== 'undefined' && typeof window.APP_BASE_PATH === 'string')
+        ? window.APP_BASE_PATH
+        : '';
+    if (explicit) return explicit.replace(/\/$/, '');
+
+    const path = (typeof window !== 'undefined' && window.location && window.location.pathname) || '';
+    const marker = '/app';
+    const index = path.indexOf(marker);
+    return index > 0 ? path.slice(0, index) : '';
+})();
+
 const API = {
-    base: '/api',
+    base: APP_BASE_PATH + '/api',
     initData() {
         if (typeof Auth !== 'undefined') return Auth.getAuthHeader();
         return (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData)
             ? 'tma ' + window.Telegram.WebApp.initData : '';
     },
-    async req(method, path, body) {
+    async req(method, path, body, signal) {
         const opts = {
             method,
             headers: { 'Authorization': this.initData() }
         };
+        if (signal) opts.signal = signal;
         if (body && !(body instanceof FormData)) {
             opts.headers['Content-Type'] = 'application/json';
             opts.body = JSON.stringify(body);
@@ -26,15 +39,22 @@ const API = {
 
     // Projects
     getProjects() { return this.req('GET', '/projects'); },
-    createProject(name, desc) { return this.req('POST', '/projects', { name, description: desc }); },
+    createProject(name, desc, sourceLang, targetLang) {
+        return this.req('POST', '/projects', {
+            name,
+            description: desc,
+            source_lang: sourceLang,
+            target_lang: targetLang
+        });
+    },
     getProject(id) { return this.req('GET', '/projects/' + id); },
     updateProject(id, data) { return this.req('PATCH', '/projects/' + id, data); },
     deleteProject(id) { return this.req('DELETE', '/projects/' + id); },
 
     // Files
-    getFiles(pid, cat) {
+    getFiles(pid, cat, signal) {
         const q = cat ? '?category=' + cat : '';
-        return this.req('GET', '/projects/' + pid + '/files' + q);
+        return this.req('GET', '/projects/' + pid + '/files' + q, undefined, signal);
     },
     getFileContent(pid, fid) { return this.req('GET', '/projects/' + pid + '/files/' + fid + '/content'); },
     async downloadFileBlob(pid, fid) {
@@ -47,172 +67,175 @@ const API = {
     },
     deleteFile(pid, fid) { return this.req('DELETE', '/projects/' + pid + '/files/' + fid); },
     async uploadFiles(pid, files, category, onProgress) {
-        const CONCURRENT = 5;
-        const queue = [...files];
-        let done = 0;
         const total = files.length;
-        const results = [];
+        const CONCURRENT = Math.min(3, Math.max(1, total));
+        const queue = files.map((file, index) => ({ file, index }));
+        const results = new Array(total);
+        const states = files.map((file, index) => ({
+            index,
+            name: file.name || ('file-' + (index + 1)),
+            size: file.size || 0,
+            status: 'queued',
+            phase: 'У черзі',
+            loaded: 0,
+            total: file.size || 0,
+            uploadPercent: 0,
+            error: ''
+        }));
+
+        const emit = () => {
+            if (!onProgress) return;
+            const completed = states.filter(s => s.status === 'done').length;
+            const failed = states.filter(s => s.status === 'error').length;
+            const active = states.find(s => ['uploading', 'analyzing'].includes(s.status));
+            const contribution = states.reduce((sum, s) => {
+                if (s.status === 'done' || s.status === 'error') return sum + 1;
+                if (s.status === 'analyzing') return sum + 0.88;
+                if (s.status === 'uploading') return sum + (0.08 + 0.72 * (s.uploadPercent / 100));
+                return sum;
+            }, 0);
+            onProgress({
+                total,
+                completed,
+                failed,
+                activeFileName: active ? active.name : '',
+                phaseLabel: active ? active.phase : (completed + failed >= total ? 'Готово' : 'Очікування'),
+                aggregatePercent: Math.max(0, Math.min(100, Math.round((contribution / Math.max(1, total)) * 100))),
+                files: states.map(s => ({ ...s }))
+            });
+        };
+
+        const uploadOne = (file, index) => new Promise(resolve => {
+            const state = states[index];
+            state.status = 'uploading';
+            state.phase = 'Завантаження на сервер';
+            emit();
+
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('category', category);
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', API.base + '/projects/' + pid + '/files');
+            xhr.setRequestHeader('Authorization', API.initData());
+            xhr.timeout = 20 * 60 * 1000;
+
+            xhr.upload.onprogress = (evt) => {
+                state.status = 'uploading';
+                state.phase = 'Завантаження на сервер';
+                if (evt.lengthComputable) {
+                    state.loaded = evt.loaded;
+                    state.total = evt.total || state.total || file.size || 0;
+                    state.uploadPercent = Math.max(0, Math.min(100, Math.round((evt.loaded / Math.max(1, evt.total)) * 100)));
+                }
+                emit();
+            };
+            xhr.upload.onload = () => {
+                state.status = 'analyzing';
+                state.phase = 'Сервер рахує символи, сторінки та ціну';
+                state.loaded = state.total || file.size || state.loaded;
+                state.uploadPercent = 100;
+                emit();
+            };
+            xhr.onload = () => {
+                let json = {};
+                try {
+                    json = JSON.parse(xhr.responseText || '{}');
+                } catch (_) {
+                    json = {};
+                }
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    state.status = 'done';
+                    state.phase = 'Розрахунок готовий';
+                    state.loaded = state.total || file.size || state.loaded;
+                    state.uploadPercent = 100;
+                    results[index] = json;
+                } else {
+                    const msg = json.error || ('Помилка ' + xhr.status);
+                    state.status = 'error';
+                    state.phase = 'Помилка';
+                    state.error = msg;
+                    results[index] = { error: msg, file: state.name };
+                }
+                emit();
+                resolve();
+            };
+            xhr.onerror = () => {
+                state.status = 'error';
+                state.phase = 'Помилка мережі';
+                state.error = 'Помилка мережі під час завантаження';
+                results[index] = { error: state.error, file: state.name };
+                emit();
+                resolve();
+            };
+            xhr.ontimeout = () => {
+                state.status = 'error';
+                state.phase = 'Timeout';
+                state.error = 'Сервер надто довго обробляє файл. Спробуйте ще раз або зверніться до адміністратора.';
+                results[index] = { error: state.error, file: state.name };
+                emit();
+                resolve();
+            };
+            try {
+                xhr.send(fd);
+            } catch (e) {
+                state.status = 'error';
+                state.phase = 'Помилка';
+                state.error = e.message || 'Не вдалося почати завантаження';
+                results[index] = { error: state.error, file: state.name };
+                emit();
+                resolve();
+            }
+        });
 
         async function worker() {
             while (queue.length > 0) {
-                const file = queue.shift();
-                const fd = new FormData();
-                fd.append('file', file);
-                fd.append('category', category);
-                try {
-                    const r = await fetch('/api/projects/' + pid + '/files', {
-                        method: 'POST',
-                        headers: { 'Authorization': API.initData() },
-                        body: fd
-                    });
-                    results.push(await r.json());
-                } catch (e) {
-                    results.push({ error: e.message });
-                }
-                done++;
-                if (onProgress) onProgress(done, total);
+                const item = queue.shift();
+                await uploadOne(item.file, item.index);
             }
         }
-        await Promise.all(Array(Math.min(CONCURRENT, total)).fill(0).map(() => worker()));
+
+        emit();
+        await Promise.all(Array(CONCURRENT).fill(0).map(() => worker()));
+        emit();
         return results;
     },
 
-    // Team
-    getTeam(pid) { return this.req('GET', '/projects/' + pid + '/team'); },
-    createInvite(pid) { return this.req('POST', '/projects/' + pid + '/team/invite'); },
-    removeMember(pid, mid) { return this.req('DELETE', '/projects/' + pid + '/team/' + mid); },
-
-    // Glossary
-    getGlossary(pid) { return this.req('GET', '/projects/' + pid + '/glossary'); },
-    approveTerms(pid, termIds) { return this.req('POST', '/projects/' + pid + '/glossary/approve', { term_ids: termIds }); },
-    rejectTerms(pid, termIds) { return this.req('POST', '/projects/' + pid + '/glossary/reject', { term_ids: termIds }); },
-    updateTerm(pid, termId, data) { return this.req('POST', '/projects/' + pid + '/glossary/terms/' + termId, data); },
-    exportGlossary(pid, format) { return this.req('GET', '/projects/' + pid + '/glossary/export?format=' + (format || 'tsv')); },
-    syncGlossary(pid) { return this.req('POST', '/projects/' + pid + '/glossary/sync'); },
-    importGlossary(pid, terms) { return this.req('POST', '/projects/' + pid + '/glossary/import', { terms }); },
-
-    // Glossary versions
-    getGlossaryVersions(pid) { return this.req('GET', '/projects/' + pid + '/glossary/versions'); },
-    getGlossaryVersion(pid, vid) { return this.req('GET', '/projects/' + pid + '/glossary/versions/' + vid); },
-    getGlossaryDiff(pid, a, b) { return this.req('GET', '/projects/' + pid + '/glossary/diff?a=' + a + '&b=' + b); },
-
-    // Messages
-    getMessages(pid) { return this.req('GET', '/projects/' + pid + '/messages'); },
-    sendMessage(pid, content) { return this.req('POST', '/projects/' + pid + '/messages', { content }); },
-
-    // WebSocket connection (caller handles reconnect)
-    connectMessageStream(pid, callbacks) {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const auth = encodeURIComponent(this.initData());
-        const wsUrl = `${protocol}//${window.location.host}/api/projects/${pid}/ws?auth=${auth}`;
-
-        const ws = new WebSocket(wsUrl);
-
-        ws.onopen = () => {
-            console.log('[WS] Connected, project', pid);
-            ws._pingInterval = setInterval(() => {
-                if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ type: 'ping' }));
-                }
-            }, 30000);
-            if (callbacks.onOpen) callbacks.onOpen();
-        };
-
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.type === 'pong') return;
-                if (callbacks.onMessage) callbacks.onMessage(data);
-            } catch (e) {
-                console.error('[WS] Parse error:', e);
-            }
-        };
-
-        ws.onerror = (err) => {
-            console.error('[WS] Error:', err);
-        };
-
-        ws.onclose = (event) => {
-            console.log('[WS] Closed, code:', event.code);
-            clearInterval(ws._pingInterval);
-            if (callbacks.onClose) callbacks.onClose(event);
-        };
-
-        return ws;
-    },
-
     // Pricing
+    getTranslationOptions() { return this.req('GET', '/translation/options'); },
     getPricing(pid) { return this.req('GET', '/projects/' + pid + '/pricing'); },
     createInvoice(pid, body) { return this.req('POST', '/projects/' + pid + '/invoices', body); },
     getInvoices(pid) { return this.req('GET', '/projects/' + pid + '/invoices'); },
 
-    // Settings
-    getSettings(pid) { return this.req('GET', '/projects/' + pid + '/settings'); },
-    updateSettings(pid, settings) { return this.req('POST', '/projects/' + pid + '/settings', settings); },
+    // Support
+    sendMessage(pid, content) { return this.req('POST', '/projects/' + pid + '/messages', { content }); },
 
-    // Workflow
-    getWorkflow(pid) { return this.req('GET', '/projects/' + pid + '/workflow'); },
-    advanceWorkflow(pid, stage) { return this.req('POST', '/projects/' + pid + '/workflow/advance', { stage }); },
+    // Comments / document collaboration
+    getComments(pid, type, id) {
+        return this.req('GET', '/projects/' + pid + '/comments?type=' + encodeURIComponent(type) + '&id=' + encodeURIComponent(id));
+    },
+    createComment(pid, type, id, data) {
+        return this.req('POST', '/projects/' + pid + '/comments', {
+            ...(data || {}),
+            resource_type: type,
+            resource_id: id
+        });
+    },
+    deleteComment(pid, commentId) { return this.req('DELETE', '/projects/' + pid + '/comments/' + commentId); },
+    acceptSuggestion(pid, commentId) { return this.req('POST', '/projects/' + pid + '/comments/' + commentId + '/accept', {}); },
+    rejectSuggestion(pid, commentId) { return this.req('POST', '/projects/' + pid + '/comments/' + commentId + '/reject', {}); },
+    getFilePair(pid, fid) { return this.req('GET', '/projects/' + pid + '/files/' + fid + '/pair'); },
+
+    // Team
+    getTeam(pid) { return this.req('GET', '/projects/' + pid + '/team'); },
+    createInvite(pid) { return this.req('POST', '/projects/' + pid + '/team/invite', {}); },
+    removeMember(pid, memberId) { return this.req('DELETE', '/projects/' + pid + '/team/' + memberId); },
+
+    // Audit
+    getProjectAudit(pid) { return this.req('GET', '/projects/' + pid + '/audit'); },
+    getAdminAudit() { return this.req('GET', '/admin/audit'); },
+    getAdminStatus() { return this.req('GET', '/admin/status'); },
 
     // Auth
     createSession() { return this.req('POST', '/auth/session'); },
-
-    // Search (FTS5)
-    searchGlossary(pid, query, filters) {
-        const params = new URLSearchParams({ q: query });
-        if (filters) {
-            if (filters.approved !== undefined) params.append('approved', filters.approved);
-            if (filters.pending !== undefined) params.append('pending', filters.pending);
-            if (filters.source !== undefined) params.append('source', filters.source);
-            if (filters.target !== undefined) params.append('target', filters.target);
-            if (filters.domain !== undefined) params.append('domain', filters.domain);
-        }
-        return this.req('GET', '/projects/' + pid + '/glossary/search?' + params.toString());
-    },
-
-    // Comments & Suggestions
-    getComments(pid, resourceType, resourceId) {
-        return this.req('GET', '/projects/' + pid + '/comments?type=' + resourceType + '&id=' + resourceId);
-    },
-    createComment(pid, resourceType, resourceId, data) {
-        return this.req('POST', '/projects/' + pid + '/comments', { ...data, resource_type: resourceType, resource_id: resourceId });
-    },
-    deleteComment(pid, commentId) {
-        return this.req('DELETE', '/projects/' + pid + '/comments/' + commentId);
-    },
-    acceptSuggestion(pid, commentId) {
-        return this.req('POST', '/projects/' + pid + '/comments/' + commentId + '/accept');
-    },
-    rejectSuggestion(pid, commentId) {
-        return this.req('POST', '/projects/' + pid + '/comments/' + commentId + '/reject');
-    },
-
-    // File pairs (bilingual)
-    getFilePair(pid, fid) {
-        return this.req('GET', '/projects/' + pid + '/files/' + fid + '/pair');
-    },
-
-    // Instructions
-    getInstructionTemplates() {
-        // Default templates are client-side, no API needed
-        return Promise.resolve(null);
-    },
-    getProjectInstructions(pid) {
-        return this.req('GET', '/projects/' + pid + '/instructions');
-    },
-    updateProjectInstructions(pid, instructions) {
-        return this.req('POST', '/projects/' + pid + '/instructions', { instructions });
-    },
-    generateGlossaryFromPrompt(pid, prompt) {
-        return this.req('POST', '/projects/' + pid + '/glossary/generate', { prompt });
-    },
-
-    // Git versioning
-    getBranches(pid) { return this.req('GET', '/projects/' + pid + '/branches'); },
-    createBranch(pid, name) { return this.req('POST', '/projects/' + pid + '/branches', { name }); },
-    switchBranch(pid, branchId) { return this.req('POST', '/projects/' + pid + '/branches/' + branchId + '/switch'); },
-    getCommits(pid, branchId) { return this.req('GET', '/projects/' + pid + '/branches/' + branchId + '/commits'); },
-    getCommitPreview(pid) { return this.req('GET', '/projects/' + pid + '/commit-preview'); },
-    createCommit(pid, message) { return this.req('POST', '/projects/' + pid + '/commits', { message }); },
-
 };

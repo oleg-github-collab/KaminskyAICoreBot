@@ -2,31 +2,31 @@
 
 /// Admin welcome — notifications + stats only
 pub const welcome =
-    \\<b>KI Beratung — Адмін Панель</b>
+    \\<b>Перекладач документів — адмін</b>
     \\
     \\📊 <b>Цей бот лише для сповіщень та статистики.</b>
     \\
     \\<b>Для управління використовуйте застосунок:</b>
-    \\🌐 https://bot-production-d5ec.up.railway.app
+    \\🌐 https://kaminskyi.chat/translatorbot/app
     \\📱 Або кнопка "Застосунок" нижче
     \\
     \\<b>Тут ви отримуватимете:</b>
     \\• Сповіщення про нових користувачів
     \\• Завантажені файли від клієнтів
-    \\• Готові глосарії
+    \\• Статуси перекладів
     \\• Оплати
     \\• Повідомлення від клієнтів
 ;
 
 /// User welcome — MUST use app
 pub const welcome_user =
-    \\<b>Вітаємо у KI Beratung!</b>
+    \\<b>Вітаємо у сервісі перекладу документів!</b>
     \\
-    \\✨ Професійна обробка документів та створення глосаріїв
+    \\Якісний переклад документів з точним розрахунком вартості перед оплатою.
     \\
     \\━━━━━━━━━━━━━━━━━━━━
     \\<b>⚠️ ВАЖЛИВО!</b>
-    \\Цей бот НЕ для роботи — тут лише сповіщення про статус проєктів.
+    \\Цей бот НЕ для роботи — тут лише сповіщення про статус замовлень.
     \\━━━━━━━━━━━━━━━━━━━━
     \\
     \\<b>🚀 ДЛЯ РОБОТИ ВІДКРИЙТЕ ЗАСТОСУНОК:</b>
@@ -35,20 +35,20 @@ pub const welcome_user =
     \\📱 Натисніть <b>"Застосунок"</b> ↓ нижче
     \\
     \\<b>Або на комп'ютері:</b>
-    \\🌐 https://bot-production-d5ec.up.railway.app
+    \\🌐 https://kaminskyi.chat/translatorbot/app
     \\
     \\━━━━━━━━━━━━━━━━━━━━
     \\<b>📋 В застосунку ви зможете:</b>
-    \\• Створювати та редагувати проєкти
-    \\• Завантажувати файли (PDF, DOCX, TXT)
-    \\• Переглядати та редагувати глосарії
-    \\• Спілкуватися зі спеціалістом
-    \\• Оплачувати послуги через Stripe
-    \\• Запрошувати колег до проєктів
+    \\• Створити замовлення
+    \\• Обрати мови перекладу
+    \\• Завантажити TXT, DOCX, PDF, XLSX та інші файли
+    \\• Увімкнути глосарій однією галочкою
+    \\• Оплатити онлайн і отримати готові файли
     \\
     \\📊 <b>Вартість:</b>
-    \\• Текст: €0.58 / 1800 символів
-    \\• PDF/DOC: €0.89 / 1800 символів
+    \\• TXT/DOCX без глосарію: €0.68 / 1800 символів
+    \\• TXT/DOCX з глосарієм: €0.91 / 1800 символів
+    \\• PDF/OCR/XLSX: €1.35 / 1800 символів
     \\
     \\⚡️ Швидкість: <b>~95 сторінок/добу</b>
     \\🌐 Більше: <b>kaminskyi.chat</b>
@@ -59,7 +59,7 @@ pub const use_app = "⚠️ Для роботи відкрийте застос�
 pub const use_app_for_files = "⚠️ Завантаження файлів тільки в застосунку! Натисніть кнопку \"Застосунок\" нижче.";
 
 pub const help =
-    \\<b>📖 Інструкція KI Beratung</b>
+    \\<b>📖 Інструкція</b>
     \\
     \\━━━━━━━━━━━━━━━━━━━━
     \\<b>⚠️ ВАЖЛИВО!</b>
@@ -73,22 +73,23 @@ pub const help =
     \\📱 Натисніть кнопку <b>"Застосунок"</b> ↓ нижче
     \\
     \\<b>На комп'ютері:</b>
-    \\🌐 Відкрийте https://bot-production-d5ec.up.railway.app
+    \\🌐 Відкрийте https://kaminskyi.chat/translatorbot/app
     \\
     \\Обидва варіанти синхронізовані!
     \\
     \\━━━━━━━━━━━━━━━━━━━━
     \\<b>📋 КРОК 2-5: В застосунку</b>
     \\
-    \\2️⃣ Створіть проєкт
-    \\3️⃣ Завантажте файли (PDF, DOCX, TXT)
-    \\4️⃣ Оплатіть через Stripe
-    \\5️⃣ Отримайте глосарій від спеціаліста
+    \\2️⃣ Оберіть мову оригіналу та мову перекладу
+    \\3️⃣ Завантажте файли
+    \\4️⃣ Перевірте розрахунок і оплатіть онлайн
+    \\5️⃣ Отримайте готові файли в Telegram і застосунку
     \\
     \\━━━━━━━━━━━━━━━━━━━━
     \\<b>💰 Ціни:</b>
-    \\• Текст: €0.58 / 1800 символів
-    \\• PDF/DOC: €0.89 / 1800 символів
+    \\• TXT/DOCX без глосарію: €0.68 / 1800 символів
+    \\• TXT/DOCX з глосарієм: €0.91 / 1800 символів
+    \\• PDF/OCR/XLSX: €1.35 / 1800 символів
     \\
     \\⚡️ Швидкість: ~95 сторінок/добу
     \\
@@ -238,19 +239,18 @@ pub const chatbot_system_prompt =
     \\You help clients understand how to use the service.
     \\
     \\RULES:
-    \\1. Answer ONLY questions about the service, projects, file uploads, glossaries, pricing, and payments
+    \\1. Answer ONLY questions about the service, projects, file uploads, translation, pricing, and payments
     \\2. NEVER mention any technology providers, APIs, AI models, or third-party services
-    \\3. NEVER mention OpenAI, GPT, DeepL, Stripe, or any other provider names
+    \\3. NEVER list or name any provider
     \\4. Refer to the system as "our analysis system" or "our service"
     \\5. Answer in Ukrainian unless the client writes in another language
     \\6. Be polite, professional, and helpful
     \\7. If asked about technical implementation, say "це наша власна розробка"
     \\
     \\SERVICE INFO:
-    \\- Clients upload source files (text, PDF) and reference translations
-    \\- Our specialists prepare professional glossaries of terms based on uploaded files
-    \\- Pricing: €0.58 per 1800 characters (text), €0.89 per 1800 characters (PDF/documents)
+    \\- Clients choose source and target languages, then upload source files
+    \\- Glossary support is handled by the service configuration
+    \\- Pricing: €0.68 per 1800 characters for TXT/DOCX without glossary, €0.91 with glossary, €1.35 for PDF/OCR/XLSX and similar formats
     \\- Payment is required before processing begins
-    \\- Clients can create projects, invite team members, and manage files
-    \\- Glossaries are reviewed by specialists before being shared
+    \\- Clients receive translated files in Telegram and in the application
 ;

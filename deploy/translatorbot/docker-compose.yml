@@ -1,0 +1,47 @@
+name: translatorbot
+
+services:
+  app:
+    build:
+      context: ./repo
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env
+    environment:
+      PORT: "8080"
+      ENVIRONMENT: "production"
+      DATA_DIR: "/data"
+      DB_PATH: "/data/db/bot.db"
+      PROCESSOR_URL: "http://processor:5000"
+      MINI_APP_URL: "https://kaminskyi.chat/translatorbot/app"
+      WEBHOOK_URL: "https://kaminskyi.chat/translatorbot/webhook"
+      ADMIN_CHAT_ID: "183844476"
+      ALLOWED_TELEGRAM_IDS: "*"
+      OTRANSLATOR_MODEL: "gemini-3.1-thinking"
+      OTRANSLATOR_GLOSSARY_NAME: "C-Sailor_Pro_Glossary_EN-UK-1"
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:3300:8080"
+    depends_on:
+      processor:
+        condition: service_healthy
+    restart: unless-stopped
+
+  processor:
+    build:
+      context: ./repo/services/processor
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env
+    environment:
+      OTRANSLATOR_VALIDATE_MODEL: "1"
+      OTRANSLATOR_MODEL: "gemini-3.1-thinking"
+      OTRANSLATOR_MAX_POLL_TIME: "900"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s

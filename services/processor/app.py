@@ -337,6 +337,9 @@ async def ultra_translate_document(
     target_lang: str = Form("UK"),
     glossary_name: str = Form(""),
     description: str = Form(""),
+    model: str = Form(""),
+    should_translate_image: bool = Form(True),
+    should_translate_file_name: bool = Form(True),
     authorization: str = Header(default=""),
 ):
     verify_auth(authorization)
@@ -351,6 +354,9 @@ async def ultra_translate_document(
             target_lang=target_lang,
             glossary_name=glossary_name,
             description=description,
+            model=model,
+            should_translate_image=should_translate_image,
+            should_translate_file_name=should_translate_file_name,
         )
         translated_bytes = result["translated_bytes"]
         return {
@@ -358,6 +364,9 @@ async def ultra_translate_document(
             "content_base64": base64.b64encode(translated_bytes).decode("ascii"),
             "size": len(translated_bytes),
             "taskId": result.get("taskId", ""),
+            "tokenCount": result.get("tokenCount", 0),
+            "price": result.get("price", 0),
+            "usedCredits": result.get("usedCredits", 0),
         }
     except Exception as e:
         logger.error(f"Ultra document translation failed: {e}", exc_info=True)
@@ -374,6 +383,36 @@ async def ultra_balance(authorization: str = Header(default="")):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/ultra/models")
+async def ultra_models(authorization: str = Header(default="")):
+    verify_auth(authorization)
+    try:
+        return otranslator_service.list_models()
+    except Exception as e:
+        logger.error(f"Ultra models query failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/ultra/languages")
+async def ultra_languages(authorization: str = Header(default="")):
+    verify_auth(authorization)
+    try:
+        return otranslator_service.list_languages()
+    except Exception as e:
+        logger.error(f"Ultra languages query failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/ultra/filetypes")
+async def ultra_filetypes(authorization: str = Header(default="")):
+    verify_auth(authorization)
+    try:
+        return otranslator_service.list_filetypes()
+    except Exception as e:
+        logger.error(f"Ultra filetypes query failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/ultra/glossary/create")
 async def ultra_create_glossary(request: Request, authorization: str = Header(default="")):
     verify_auth(authorization)
@@ -385,6 +424,7 @@ async def ultra_create_glossary(request: Request, authorization: str = Header(de
             source_lang=body["source_lang"],
             target_lang=body["target_lang"],
             entries=body["entries"],
+            desc=body.get("desc", ""),
         )
     except Exception as e:
         logger.error(f"Ultra glossary creation failed: {e}", exc_info=True)

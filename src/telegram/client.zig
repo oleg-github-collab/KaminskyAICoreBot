@@ -61,6 +61,46 @@ pub const TelegramClient = struct {
         return self.callRaw("sendMessage", body.items);
     }
 
+    /// Send a local file as a Telegram document via multipart/form-data.
+    pub fn sendDocument(self: *TelegramClient, chat_id: i64, file_path: []const u8, filename: []const u8, caption: []const u8) ![]const u8 {
+        var url_buf: [512]u8 = undefined;
+        const url = try std.fmt.bufPrint(&url_buf, "{s}/bot{s}/sendDocument", .{ base_url, self.bot_token });
+
+        const chat_arg = try std.fmt.allocPrint(self.allocator, "chat_id={d}", .{chat_id});
+        defer self.allocator.free(chat_arg);
+        const doc_arg = try std.fmt.allocPrint(self.allocator, "document=@{s};filename={s}", .{ file_path, filename });
+        defer self.allocator.free(doc_arg);
+        const caption_arg = try std.fmt.allocPrint(self.allocator, "caption={s}", .{caption});
+        defer self.allocator.free(caption_arg);
+
+        const result = try std.process.Child.run(.{
+            .allocator = self.allocator,
+            .argv = &[_][]const u8{
+                "curl", "-s", "--max-time", "120",
+                "-X", "POST",
+                "-F", chat_arg,
+                "-F", doc_arg,
+                "-F", caption_arg,
+                "-F", "parse_mode=HTML",
+                url,
+            },
+            .max_output_bytes = 1024 * 1024,
+        });
+        defer self.allocator.free(result.stderr);
+
+        const ok = switch (result.term) {
+            .Exited => |code| code == 0,
+            else => false,
+        };
+        if (!ok) {
+            self.allocator.free(result.stdout);
+            std.log.err("Telegram sendDocument failed: {s}", .{result.stderr});
+            return error.TelegramSendDocumentFailed;
+        }
+
+        return result.stdout;
+    }
+
     /// Edit a previously sent text message. Returns raw response JSON.
     pub fn editMessageText(self: *TelegramClient, chat_id: i64, message_id: i64, text: []const u8) ![]const u8 {
         var body = std.ArrayList(u8).init(self.allocator);

@@ -1,19 +1,36 @@
 const TeamView = {
     async render(c, project) {
         if (!project) {
-            c.innerHTML = '<div class="empty-state"><div class="empty-state-icon">' + Icons.wrap('team', 48) + '</div><p class="empty-state-title">Оберіть проєкт</p><button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До проєктів</button></div>';
+            c.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">${Icons.wrap('team', 48)}</div>
+                    <p class="empty-state-title">Оберіть замовлення</p>
+                    <p class="empty-state-text">Команда доступна всередині конкретного проєкту.</p>
+                    <button class="btn btn-primary" style="margin-top:12px" onclick="App.backToProjects()">До замовлень</button>
+                </div>`;
             return;
         }
+        const canManage = project.role === 'owner' || App.isAdmin;
         c.innerHTML = `
             <div class="section-header">
-                <h2>${App.esc(project.name)} \u2014 Команда</h2>
+                <button class="back-btn" onclick="App.backToProjects()" data-tooltip="До замовлень">${Icons.wrap('back', 16)}</button>
+                <div>
+                    <h2>${App.esc(project.name)} — Команда</h2>
+                    <div class="section-subtitle">Спільна робота без доступу до чужих проєктів</div>
+                </div>
             </div>
             <div class="invite-card">
-                <div class="card-title" style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-                    ${Icons.wrap('link', 18)} Запросити учасника
+                <div class="invite-card-head">
+                    <div class="invite-card-icon">${Icons.wrap('link', 20)}</div>
+                    <div>
+                        <div class="card-title">Запросити учасника</div>
+                        <div class="card-sub">Посилання додає людину саме до цього проєкту.</div>
+                    </div>
                 </div>
                 <div id="invite-area">
-                    <button class="btn btn-primary" onclick="TeamView.generateLink(${project.id})">${Icons.wrap('link', 16)} Отримати посилання</button>
+                    ${canManage
+                        ? `<button class="btn btn-primary invite-create-btn" onclick="TeamView.generateLink(${project.id})">${Icons.wrap('link', 16)} Отримати посилання</button>`
+                        : '<div class="invite-hint">Посилання може створити власник замовлення.</div>'}
                 </div>
             </div>
             <div id="team-list"><div class="loading">Завантаження...</div></div>`;
@@ -29,9 +46,11 @@ const TeamView = {
             area.innerHTML = `
                 <div class="invite-link-row">
                     <input class="input" id="invite-link" readonly value="${App.esc(link)}">
-                    <button class="btn btn-primary btn-sm" style="white-space:nowrap" onclick="TeamView.copyLink()">Копіювати</button>
+                    <button class="btn btn-primary btn-sm invite-copy-btn" onclick="TeamView.copyLink()">
+                        ${Icons.wrap('copy', 14)} Копіювати
+                    </button>
                 </div>
-                <div class="invite-hint">Надішліть це посилання учаснику. Він натисне \u00abStart\u00bb у боті і приєднається до проєкту.</div>`;
+                <div class="invite-hint">Надішліть посилання учаснику. Після Start у боті він приєднається до проєкту.</div>`;
         } catch (e) { App.toast(e.message, 'error'); }
     },
 
@@ -42,27 +61,50 @@ const TeamView = {
             const data = await API.getTeam(pid);
             const members = data.members || [];
             if (!members.length) {
-                list.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-icon">\ud83d\udc64</div><p>Поки що тільки ви</p><p style="font-size:13px;color:var(--hint);margin-top:4px">Запросіть учасників за посиланням вище</p></div>';
+                list.innerHTML = `
+                    <div class="empty-state team-empty">
+                        <div class="empty-state-icon">${Icons.wrap('team', 42)}</div>
+                        <p class="empty-state-title">Поки що тільки ви</p>
+                        <p class="empty-state-text">Запросіть учасників за посиланням вище.</p>
+                    </div>`;
                 return;
             }
-            list.innerHTML = `<div style="font-size:13px;font-weight:600;color:var(--hint);margin-bottom:8px">${members.length} учасник${members.length === 1 ? '' : 'ів'}</div>` +
-                members.map(m => `
+            list.innerHTML = `
+                <div class="team-list-head">
+                    <span>${members.length} учасник${members.length === 1 ? '' : 'ів'}</span>
+                    <span>${(App.currentProject?.role === 'owner' || App.isAdmin) ? 'Керування доступом' : 'Перегляд складу'}</span>
+                </div>
+                <div class="member-list">
+                    ${members.map(m => this.renderMember(pid, m)).join('')}
+                </div>`;
+        } catch (e) {
+            list.innerHTML = `
+                <div class="empty-state team-empty">
+                    <div class="empty-state-icon">${Icons.wrap('warning', 42)}</div>
+                    <p class="empty-state-title">Не вдалося завантажити команду</p>
+                    <p class="empty-state-text">${App.esc(e.message)}</p>
+                </div>`;
+        }
+    },
+
+    renderMember(pid, m) {
+        const canRemove = (App.currentProject?.role === 'owner' || App.isAdmin) && m.role !== 'owner';
+        const fullName = `${m.first_name || ''} ${m.last_name || ''}`.trim() || (m.username ? '@' + m.username : 'Користувач');
+        const safeName = this.inlineArg(fullName);
+        const initials = this.initials(m, fullName);
+        return `
                 <div class="member-item">
-                    <div class="member-avatar">${m.role === 'owner' ? '\ud83d\udc51' : '\ud83d\udc64'}</div>
+                    <div class="member-avatar ${m.role === 'owner' ? 'owner' : ''}">${m.role === 'owner' ? Icons.wrap('admin', 18) : App.esc(initials)}</div>
                     <div class="member-info">
-                        <div class="member-name">${App.esc(m.first_name || '')} ${App.esc(m.last_name || '')}</div>
+                        <div class="member-name">${App.esc(fullName)}</div>
                         <div class="member-meta">
-                            ${m.username ? '@' + App.esc(m.username) + ' \u00b7 ' : ''}${this.roleName(m.role)}${m.joined_at ? ' \u00b7 ' + App.fmtDate(m.joined_at) : ''}
+                            ${m.username ? '@' + App.esc(m.username) + ' · ' : ''}${this.roleName(m.role)}${m.joined_at ? ' · ' + App.fmtDate(m.joined_at) : ''}
                         </div>
                     </div>
-                    ${m.role !== 'owner'
-                        ? `<button class="btn btn-icon btn-sm" style="color:var(--red);background:var(--red-bg)" onclick="TeamView.removeMember(${pid},${m.id},'${App.esc(m.first_name || 'учасника').replace(/'/g, "\\'")}')" data-tooltip="Видалити">\u2715</button>`
-                        : '<span class="card-badge">Власник</span>'}
-                </div>
-            `).join('');
-        } catch (e) {
-            list.innerHTML = `<p style="color:var(--hint);padding:12px">Помилка: ${App.esc(e.message)}</p>`;
-        }
+                    ${canRemove
+                        ? `<button class="btn btn-icon btn-sm member-remove-btn" onclick="TeamView.removeMember(${pid},${m.id},'${safeName}')" data-tooltip="Видалити">${Icons.wrap('trash', 15)}</button>`
+                        : `<span class="role-badge ${m.role === 'owner' ? 'owner' : ''}">${m.role === 'owner' ? 'Власник' : 'Учасник'}</span>`}
+                </div>`;
     },
 
     async removeMember(pid, mid, name) {
@@ -80,10 +122,32 @@ const TeamView = {
         return { owner: 'Власник', member: 'Учасник', admin: 'Адмін' }[role] || role;
     },
 
+    initials(member, fallback) {
+        const first = (member.first_name || '').trim();
+        const last = (member.last_name || '').trim();
+        const value = (first[0] || '') + (last[0] || '');
+        if (value) return value.toUpperCase();
+        return String(fallback || 'U').slice(0, 2).toUpperCase();
+    },
+
+    inlineArg(value) {
+        return App.esc(String(value || 'учасника'))
+            .replace(/\\/g, '\\\\')
+            .replace(/\r?\n/g, ' ')
+            .replace(/'/g, "\\'");
+    },
+
     copyLink() {
         const input = document.getElementById('invite-link');
         if (input) {
-            navigator.clipboard.writeText(input.value).then(() => {
+            const copy = navigator.clipboard
+                ? navigator.clipboard.writeText(input.value)
+                : Promise.reject(new Error('Clipboard unavailable'));
+            copy.then(() => {
+                App.toast('Посилання скопійовано', 'success');
+            }).catch(() => {
+                input.select();
+                document.execCommand('copy');
                 App.toast('Посилання скопійовано', 'success');
             });
         }

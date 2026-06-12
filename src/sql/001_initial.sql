@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS user_states (
     updated_at      INTEGER NOT NULL
 );
 
+-- TODO(reliability): child tables use ON DELETE CASCADE; consider RESTRICT to prevent
+-- accidental loss of paid translation data. Deferred: requires a risky table rebuild on live data.
 CREATE TABLE IF NOT EXISTS projects (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_id        INTEGER NOT NULL REFERENCES users(id),

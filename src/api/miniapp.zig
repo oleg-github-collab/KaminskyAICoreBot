@@ -21,6 +21,7 @@ const AuthError = error{
     InvalidAuth,
     ExpiredAuth,
     MissingUser,
+    Forbidden,
 };
 
 const ProjectAccess = struct {
@@ -67,6 +68,115 @@ fn dupSlice(allocator: std.mem.Allocator, value: []const u8) ![]const u8 {
     return allocator.dupe(u8, value);
 }
 
+fn requestIp(req: *httpz.Request) []const u8 {
+    return req.header("X-Forwarded-For") orelse req.header("X-Real-IP") orelse "unknown";
+}
+
+fn requestUserAgent(req: *httpz.Request) []const u8 {
+    return req.header("User-Agent") orelse "unknown";
+}
+
+fn recordAudit(
+    req: *httpz.Request,
+    user: db_users.UserRecord,
+    action: []const u8,
+    resource_type: []const u8,
+    project_id: ?i64,
+    resource_id: ?i64,
+    details: ?[]const u8,
+) void {
+    const a = app();
+    var stmt = a.db.prepare(
+        \\INSERT INTO audit_log
+        \\  (user_id, project_id, action, resource_type, resource_id, old_value, new_value, ip_address, user_agent, created_at)
+        \\VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+    ) catch |err| {
+        std.log.warn("Audit prepare failed: {}", .{err});
+        return;
+    };
+    defer stmt.deinit();
+
+    stmt.bindInt(1, user.id) catch return;
+    if (project_id) |pid| {
+        stmt.bindInt(2, pid) catch return;
+    } else {
+        stmt.bindNull(2) catch return;
+    }
+    stmt.bindText(3, action) catch return;
+    stmt.bindText(4, resource_type) catch return;
+    if (resource_id) |rid| {
+        stmt.bindInt(5, rid) catch return;
+    } else {
+        stmt.bindNull(5) catch return;
+    }
+    stmt.bindText(6, details) catch return;
+    stmt.bindText(7, requestIp(req)) catch return;
+    stmt.bindText(8, requestUserAgent(req)) catch return;
+    stmt.bindInt(9, std.time.timestamp()) catch return;
+    stmt.exec() catch |err| {
+        std.log.warn("Audit insert failed: {}", .{err});
+    };
+}
+
+fn recentAuditCount(user_id: i64, action: []const u8, resource_type: []const u8, since: i64) !i64 {
+    const a = app();
+    var stmt = try a.db.prepare(
+        \\SELECT COUNT(*)
+        \\FROM audit_log
+        \\WHERE user_id = ?
+        \\  AND action = ?
+        \\  AND resource_type = ?
+        \\  AND created_at >= ?
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, user_id);
+    try stmt.bindText(2, action);
+    try stmt.bindText(3, resource_type);
+    try stmt.bindInt(4, since);
+    if (try stmt.step()) return stmt.columnInt(0);
+    return 0;
+}
+
+fn enforceUserActionLimit(
+    req: *httpz.Request,
+    res: *httpz.Response,
+    user: db_users.UserRecord,
+    action: []const u8,
+    max_count: i64,
+    window_seconds: i64,
+) bool {
+    if (user.is_admin) return true;
+
+    const now = std.time.timestamp();
+    const count = recentAuditCount(user.id, action, "rate", now - window_seconds) catch |err| {
+        std.log.warn("Rate-limit audit check failed for user {d}, action {s}: {}", .{ user.id, action, err });
+        return true;
+    };
+    if (count < max_count) return true;
+
+    const recent_notice = recentAuditCount(user.id, "rate_limited", action, now - 900) catch 0;
+    recordAudit(req, user, "rate_limited", action, null, null, "local abuse limit exceeded");
+    if (recent_notice == 0) {
+        var buf: [384]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf,
+            "Антиаб'юз ліміт спрацював.\nUser ID: {d}\nTelegram ID: {d}\nAction: {s}\nIP: {s}",
+            .{ user.id, user.telegram_id, action, requestIp(req) },
+        ) catch "Антиаб'юз ліміт спрацював.";
+        handler.notifyAdmin(msg);
+    }
+
+    res.status = 429;
+    res.header("Retry-After", "300");
+    res.json(.{ .@"error" = "Забагато дій за короткий час. Спробуйте пізніше." }, .{}) catch {
+        res.body = "{\"error\":\"rate_limited\"}";
+    };
+    return false;
+}
+
+fn recordRateAction(req: *httpz.Request, user: db_users.UserRecord, action: []const u8, project_id: ?i64, resource_id: ?i64, details: ?[]const u8) void {
+    recordAudit(req, user, action, "rate", project_id, resource_id, details);
+}
+
 fn authenticate(req: *httpz.Request, res: *httpz.Response) ?db_users.UserRecord {
     return authenticateImpl(req) catch |err| {
         switch (err) {
@@ -74,6 +184,7 @@ fn authenticate(req: *httpz.Request, res: *httpz.Response) ?db_users.UserRecord 
             AuthError.InvalidAuth => jsonError(res, 401, "Невірний підпис Telegram Mini App."),
             AuthError.ExpiredAuth => jsonError(res, 401, "Telegram-сесія застаріла. Відкрийте Mini App ще раз."),
             AuthError.MissingUser => jsonError(res, 401, "Не вдалося визначити користувача Telegram."),
+            AuthError.Forbidden => jsonError(res, 403, "Доступ до застосунку обмежено. Зверніться до адміністратора."),
             else => {
                 std.log.err("Mini App auth failed: {}", .{err});
                 jsonError(res, 500, "Помилка авторизації.");
@@ -88,7 +199,7 @@ fn authenticateImpl(req: *httpz.Request) !db_users.UserRecord {
     const auth_header = req.header("authorization");
 
     if (auth_header == null or auth_header.?.len == 0) {
-        if (!a.config.is_production) {
+        if (devModeAllowed(a)) {
             return devUser();
         }
         return AuthError.Unauthorized;
@@ -107,7 +218,7 @@ fn authenticateImpl(req: *httpz.Request) !db_users.UserRecord {
     }
 
     if (!std.mem.startsWith(u8, header_value, "tma ")) {
-        if (!a.config.is_production) {
+        if (devModeAllowed(a)) {
             return devUser();
         }
         return AuthError.Unauthorized;
@@ -115,7 +226,7 @@ fn authenticateImpl(req: *httpz.Request) !db_users.UserRecord {
 
     const raw_init_data = std.mem.trim(u8, header_value[4..], &std.ascii.whitespace);
     if (raw_init_data.len == 0) {
-        if (!a.config.is_production) {
+        if (devModeAllowed(a)) {
             return devUser();
         }
         return AuthError.Unauthorized;
@@ -136,6 +247,10 @@ fn authenticateImpl(req: *httpz.Request) !db_users.UserRecord {
     const tg_user = try std.json.parseFromSliceLeaky(MiniAppUser, req.arena, user_json, .{
         .ignore_unknown_fields = true,
     });
+
+    if (!a.config.isTelegramUserAllowed(tg_user.id)) {
+        return AuthError.Forbidden;
+    }
 
     var user = try db_users.findOrCreate(
         req.arena,
@@ -166,7 +281,7 @@ fn authenticateBearer(a: *handler.App, token: []const u8) !db_users.UserRecord {
     try stmt.bindInt(2, now);
 
     if (try stmt.step()) {
-        return db_users.UserRecord{
+        const user = db_users.UserRecord{
             .id = stmt.columnInt(0),
             .telegram_id = stmt.columnInt(1),
             .first_name = try a.allocator.dupe(u8, stmt.columnText(2) orelse ""),
@@ -174,6 +289,10 @@ fn authenticateBearer(a: *handler.App, token: []const u8) !db_users.UserRecord {
             .username = if (stmt.columnText(4)) |un| try a.allocator.dupe(u8, un) else null,
             .is_admin = stmt.columnInt(5) == 1,
         };
+        if (!a.config.isTelegramUserAllowed(user.telegram_id)) {
+            return AuthError.Forbidden;
+        }
+        return user;
     }
     return AuthError.InvalidAuth;
 }
@@ -210,6 +329,10 @@ pub fn authenticateToken(allocator: std.mem.Allocator, db: *sqlite.Db, auth: []c
             .ignore_unknown_fields = true,
         });
 
+        if (!a.config.isTelegramUserAllowed(tg_user.id)) {
+            return AuthError.Forbidden;
+        }
+
         var user = try db_users.findOrCreate(
             allocator,
             &a.db,
@@ -228,11 +351,16 @@ pub fn authenticateToken(allocator: std.mem.Allocator, db: *sqlite.Db, auth: []c
     }
 
     // Dev mode fallback
-    if (!a.config.is_production) {
+    if (devModeAllowed(a)) {
         return devUser();
     }
 
     return AuthError.InvalidAuth;
+}
+
+/// Dev-mode auto-admin is only permitted when explicitly enabled AND not in production.
+fn devModeAllowed(a: *handler.App) bool {
+    return a.config.allow_dev_mode and !a.config.is_production;
 }
 
 fn devUser() !db_users.UserRecord {
@@ -400,7 +528,8 @@ fn parseProjectAccessImpl(req: *httpz.Request, user: db_users.UserRecord) !Proje
         };
     }
 
-    const role = try membershipRole(&a.db, project_id, user.id) orelse return error.ProjectForbidden;
+    const role = (try membershipRole(&a.db, project_id, user.id)) orelse return error.ProjectForbidden;
+
     return .{
         .project_id = project_id,
         .project = project,
@@ -509,6 +638,185 @@ fn approvedGlossaryCount(db: *sqlite.Db, project_id: i64) !i64 {
     return 0;
 }
 
+fn targetLanguageCount(raw: []const u8) i64 {
+    var count: i64 = 0;
+    var parts = std.mem.splitScalar(u8, raw, ',');
+    while (parts.next()) |part| {
+        const trimmed = std.mem.trim(u8, part, &std.ascii.whitespace);
+        if (trimmed.len > 0) count += 1;
+    }
+    return if (count > 0) count else 1;
+}
+
+fn paidAmountForInvoiceType(db: *sqlite.Db, project_id: i64, invoice_type: []const u8) !i64 {
+    var stmt = try db.prepare(
+        \\SELECT COALESCE(SUM(amount_cents), 0)
+        \\FROM invoices
+        \\WHERE project_id = ?
+        \\  AND status = 'paid'
+        \\  AND COALESCE(invoice_type, 'translation') = ?
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, project_id);
+    try stmt.bindText(2, invoice_type);
+    if (try stmt.step()) return stmt.columnInt(0);
+    return 0;
+}
+
+const PaymentCoverage = struct {
+    paid_cents: i64,
+    required_cents: i64,
+};
+
+fn translationPaymentCoverage(allocator: std.mem.Allocator, project_id: i64) !PaymentCoverage {
+    const a = app();
+    return .{
+        .paid_cents = try paidAmountForInvoiceType(&a.db, project_id, "translation"),
+        .required_cents = try currentTranslationTotalCents(allocator, project_id),
+    };
+}
+
+fn currentTranslationTotalCents(allocator: std.mem.Allocator, project_id: i64) !i64 {
+    const a = app();
+    const project = try db_projects.getById(allocator, &a.db, project_id) orelse return error.ProjectNotFound;
+    const target_count = targetLanguageCount(project.target_lang);
+    const has_glossary = a.config.otranslator_glossary_name.len > 0 and project.use_glossary;
+
+    var stmt = try a.db.prepare(
+        "SELECT original_name, char_count, page_count FROM files WHERE project_id = ? AND category = 'source'",
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, project_id);
+
+    var one_target_total: i64 = 0;
+    while (try stmt.step()) {
+        const file_name = stmt.columnText(0) orelse "";
+        const chars = stmt.columnInt(1);
+        const pages = stmt.columnInt(2);
+        one_target_total += pricing.priceForFile(file_name, pricing.effectiveChars(chars, pages), has_glossary);
+    }
+
+    return one_target_total * target_count;
+}
+
+fn supersedeStalePendingInvoices(db: *sqlite.Db, project_id: i64, invoice_type: []const u8, amount_cents: i64) !void {
+    var stmt = try db.prepare(
+        \\UPDATE invoices
+        \\SET status = 'superseded'
+        \\WHERE project_id = ?
+        \\  AND status = 'pending'
+        \\  AND COALESCE(invoice_type, 'translation') = ?
+        \\  AND amount_cents != ?
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, project_id);
+    try stmt.bindText(2, invoice_type);
+    try stmt.bindInt(3, amount_cents);
+    try stmt.exec();
+}
+
+const PendingInvoice = struct {
+    id: i64,
+    payment_url: []const u8,
+};
+
+fn findReusablePendingInvoice(
+    allocator: std.mem.Allocator,
+    db: *sqlite.Db,
+    project_id: i64,
+    invoice_type: []const u8,
+    amount_cents: i64,
+) !?PendingInvoice {
+    var stmt = try db.prepare(
+        \\SELECT id, stripe_payment_url
+        \\FROM invoices
+        \\WHERE project_id = ?
+        \\  AND status = 'pending'
+        \\  AND COALESCE(invoice_type, 'translation') = ?
+        \\  AND amount_cents = ?
+        \\  AND stripe_payment_url IS NOT NULL
+        \\  AND stripe_payment_url != ''
+        \\ORDER BY created_at DESC
+        \\LIMIT 1
+    );
+    defer stmt.deinit();
+    try stmt.bindInt(1, project_id);
+    try stmt.bindText(2, invoice_type);
+    try stmt.bindInt(3, amount_cents);
+    if (try stmt.step()) {
+        return .{
+            .id = stmt.columnInt(0),
+            .payment_url = try dupOrEmpty(allocator, stmt.columnText(1)),
+        };
+    }
+    return null;
+}
+
+fn extEquals(file_name: []const u8, expected: []const u8) bool {
+    const dot_idx = std.mem.lastIndexOfScalar(u8, file_name, '.') orelse return false;
+    const ext = file_name[dot_idx..];
+    if (ext.len != expected.len) return false;
+    for (ext, expected) |a, b| {
+        const la = if (a >= 'A' and a <= 'Z') a + 32 else a;
+        const lb = if (b >= 'A' and b <= 'Z') b + 32 else b;
+        if (la != lb) return false;
+    }
+    return true;
+}
+
+fn isImageFormat(file_name: []const u8) bool {
+    return extEquals(file_name, ".jpg") or extEquals(file_name, ".jpeg") or
+        extEquals(file_name, ".png") or extEquals(file_name, ".webp") or
+        extEquals(file_name, ".svg");
+}
+
+fn isSupportedTranslationFormat(file_name: []const u8) bool {
+    return extEquals(file_name, ".txt") or extEquals(file_name, ".doc") or
+        extEquals(file_name, ".docx") or extEquals(file_name, ".rtf") or
+        extEquals(file_name, ".pdf") or extEquals(file_name, ".xls") or
+        extEquals(file_name, ".xlsx") or extEquals(file_name, ".ppt") or
+        extEquals(file_name, ".pptx") or extEquals(file_name, ".odt") or
+        extEquals(file_name, ".ods") or extEquals(file_name, ".odp") or
+        extEquals(file_name, ".wps") or extEquals(file_name, ".et") or
+        extEquals(file_name, ".dps") or extEquals(file_name, ".epub") or
+        extEquals(file_name, ".chm") or extEquals(file_name, ".ai") or
+        extEquals(file_name, ".indd") or extEquals(file_name, ".idml") or
+        extEquals(file_name, ".html") or extEquals(file_name, ".htm") or
+        extEquals(file_name, ".xml") or extEquals(file_name, ".json") or
+        extEquals(file_name, ".resjson") or extEquals(file_name, ".csv") or
+        extEquals(file_name, ".tsv") or extEquals(file_name, ".md") or
+        extEquals(file_name, ".srt") or extEquals(file_name, ".ass") or
+        extEquals(file_name, ".ssa") or extEquals(file_name, ".vtt") or
+        extEquals(file_name, ".po") or extEquals(file_name, ".xlf") or
+        extEquals(file_name, ".xliff") or extEquals(file_name, ".go") or
+        extEquals(file_name, ".yml") or extEquals(file_name, ".yaml") or
+        extEquals(file_name, ".php") or extEquals(file_name, ".plist") or
+        extEquals(file_name, ".stringsdict") or extEquals(file_name, ".tex") or
+        extEquals(file_name, ".arxiv") or isImageFormat(file_name);
+}
+
+fn isPreviewableFormat(file_name: []const u8) bool {
+    return extEquals(file_name, ".pdf") or extEquals(file_name, ".docx") or
+        extEquals(file_name, ".txt") or extEquals(file_name, ".md") or
+        extEquals(file_name, ".html") or extEquals(file_name, ".htm") or
+        extEquals(file_name, ".xml") or extEquals(file_name, ".json") or
+        extEquals(file_name, ".csv") or extEquals(file_name, ".tsv");
+}
+
+fn publicJobStatus(status: []const u8) []const u8 {
+    if (std.mem.eql(u8, status, "completed")) return "completed";
+    if (std.mem.eql(u8, status, "failed")) return "review";
+    return "processing";
+}
+
+fn publicJobLabel(status: []const u8) []const u8 {
+    if (std.mem.eql(u8, status, "completed")) return "Готово";
+    if (std.mem.eql(u8, status, "failed")) return "Потребує перевірки";
+    if (std.mem.eql(u8, status, "waiting_credits")) return "У черзі";
+    if (std.mem.eql(u8, status, "external_timeout_pending")) return "Очікує завершення";
+    return "Перекладається";
+}
+
 /// Public wrapper for bot commands to create Stripe sessions
 pub fn createStripeSession(
     allocator: std.mem.Allocator,
@@ -519,7 +827,7 @@ pub fn createStripeSession(
     project_id: i64,
     user_telegram_id: i64,
 ) !StripeSession {
-    return createStripeCheckoutSession(allocator, secret_key, amount_cents, project_name, mini_app_url, project_id, user_telegram_id, "glossary", null);
+    return createStripeCheckoutSession(allocator, secret_key, amount_cents, project_name, mini_app_url, project_id, user_telegram_id, "translation", null);
 }
 
 fn createStripeCheckoutSession(
@@ -648,16 +956,25 @@ pub fn handleProjects(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const a = app();
 
-    var stmt = try a.db.prepare(
-        \\SELECT p.id, p.owner_id, p.name, p.description, p.source_lang, p.target_lang,
-        \\       p.invite_code, p.is_active, pm.role, p.workflow_stage
-        \\FROM projects p
-        \\JOIN project_members pm ON pm.project_id = p.id
-        \\WHERE pm.user_id = ? AND p.is_active = 1
-        \\ORDER BY p.updated_at DESC, p.created_at DESC
-    );
+    var stmt = if (user.is_admin)
+        try a.db.prepare(
+            \\SELECT p.id, p.owner_id, p.name, p.description, p.source_lang, p.target_lang,
+            \\       p.invite_code, p.is_active, 'owner' AS role, p.workflow_stage, COALESCE(p.use_glossary, 1)
+            \\FROM projects p
+            \\WHERE p.is_active = 1
+            \\ORDER BY p.updated_at DESC, p.created_at DESC
+        )
+    else
+        try a.db.prepare(
+            \\SELECT p.id, p.owner_id, p.name, p.description, p.source_lang, p.target_lang,
+            \\       p.invite_code, p.is_active, pm.role AS role, p.workflow_stage, COALESCE(p.use_glossary, 1)
+            \\FROM projects p
+            \\JOIN project_members pm ON pm.project_id = p.id
+            \\WHERE pm.user_id = ? AND p.is_active = 1
+            \\ORDER BY p.updated_at DESC, p.created_at DESC
+        );
     defer stmt.deinit();
-    try stmt.bindInt(1, user.id);
+    if (!user.is_admin) try stmt.bindInt(1, user.id);
 
     const Item = struct {
         id: i64,
@@ -671,6 +988,7 @@ pub fn handleProjects(req: *httpz.Request, res: *httpz.Response) !void {
         is_active: bool,
         role: []const u8,
         workflow_stage: []const u8,
+        use_glossary: bool,
     };
 
     var items = std.ArrayList(Item).init(res.arena);
@@ -689,6 +1007,7 @@ pub fn handleProjects(req: *httpz.Request, res: *httpz.Response) !void {
             .is_active = stmt.columnInt(7) == 1,
             .role = try dupOrEmpty(res.arena, stmt.columnText(8)),
             .workflow_stage = if (ws.len > 0) ws else "files_uploaded",
+            .use_glossary = stmt.columnInt(10) == 1,
         });
     }
 
@@ -699,9 +1018,15 @@ pub fn handleCreateProject(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const a = app();
 
+    if (!enforceUserActionLimit(req, res, user, "create_project", 8, 3600)) return;
+    if (!enforceUserActionLimit(req, res, user, "create_project", 30, 86400)) return;
+
     const Body = struct {
         name: []const u8,
         description: ?[]const u8 = null,
+        source_lang: ?[]const u8 = null,
+        target_lang: ?[]const u8 = null,
+        use_glossary: ?bool = null,
     };
 
     const payload = (try req.json(Body)) orelse {
@@ -717,11 +1042,27 @@ pub fn handleCreateProject(req: *httpz.Request, res: *httpz.Response) !void {
 
     const description = std.mem.trim(u8, payload.description orelse "", &std.ascii.whitespace);
     const project = try db_projects.create(res.arena, &a.db, user.id, name, description);
+    const source_lang = std.mem.trim(u8, payload.source_lang orelse "German", &std.ascii.whitespace);
+    const target_lang = std.mem.trim(u8, payload.target_lang orelse "Ukrainian", &std.ascii.whitespace);
+    {
+        var lang_stmt = try a.db.prepare("UPDATE projects SET source_lang = ?, target_lang = ?, use_glossary = ?, updated_at = ? WHERE id = ?");
+        defer lang_stmt.deinit();
+        try lang_stmt.bindText(1, if (source_lang.len > 0) source_lang else "German");
+        try lang_stmt.bindText(2, if (target_lang.len > 0) target_lang else "Ukrainian");
+        try lang_stmt.bindInt(3, if (payload.use_glossary orelse true) 1 else 0);
+        try lang_stmt.bindInt(4, std.time.timestamp());
+        try lang_stmt.bindInt(5, project.id);
+        try lang_stmt.exec();
+    }
     storage.createProjectDirs(a.config.data_dir, project.id) catch |err| {
         std.log.err("Failed to create project directories: {}", .{err});
+        handler.notifyAdmin("Помилка створення директорій проєкту. Перевірте volume/storage.");
         jsonError(res, 500, "Не вдалося створити папки проєкту.");
         return;
     };
+
+    recordRateAction(req, user, "create_project", project.id, project.id, "project created");
+    recordAudit(req, user, "create_project", "project", project.id, project.id, name);
 
     res.status = 201;
     try res.json(.{
@@ -730,12 +1071,13 @@ pub fn handleCreateProject(req: *httpz.Request, res: *httpz.Response) !void {
             .owner_id = project.owner_id,
             .name = project.name,
             .description = project.description,
-            .source_lang = project.source_lang,
-            .target_lang = project.target_lang,
+            .source_lang = if (source_lang.len > 0) source_lang else "German",
+            .target_lang = if (target_lang.len > 0) target_lang else "Ukrainian",
             .invite_code = project.invite_code,
             .invite_link = try inviteLink(res.arena, a.config.bot_username, project.invite_code),
             .is_active = project.is_active,
             .workflow_stage = project.workflow_stage,
+            .use_glossary = payload.use_glossary orelse true,
         },
     }, .{});
 }
@@ -757,6 +1099,7 @@ pub fn handleGetProject(req: *httpz.Request, res: *httpz.Response) !void {
             .invite_link = try inviteLink(res.arena, a.config.bot_username, access.project.invite_code),
             .is_active = access.project.is_active,
             .workflow_stage = access.project.workflow_stage,
+            .use_glossary = access.project.use_glossary,
         },
     }, .{});
 }
@@ -829,6 +1172,9 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
     const access = parseProjectAccess(req, res, user) orelse return;
     const a = app();
 
+    if (!enforceUserActionLimit(req, res, user, "upload_file", 25, 3600)) return;
+    if (!enforceUserActionLimit(req, res, user, "upload_file", 120, 86400)) return;
+
     const form = req.multiFormData() catch |err| {
         std.log.err("Multipart parse error: {}", .{err});
         jsonError(res, 400, "Не вдалося прочитати multipart-запит.");
@@ -864,6 +1210,10 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
     const store_path = try storage.filePath(&path_buf, a.config.data_dir, access.project_id, category, stored_name);
     try storage.atomicWrite(store_path, file_field.value);
 
+    if (file_field.value.len > std.math.maxInt(i64)) {
+        jsonError(res, 413, "Файл занадто великий.");
+        return;
+    }
     const file_size: i64 = @intCast(file_field.value.len);
     var char_count: i64 = 0;
     var page_count: i64 = 0;
@@ -875,21 +1225,21 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
         if (processor_client.countDocument(res.arena, &a.config, store_path, original_name)) |result| {
             char_count = result.chars;
             page_count = result.pages;
-            price_cents = result.pricing_cents;
         } else |_| {
-            // Fallback to local pricing
+            // Fallback to local pricing.
+            // These u64 counts are derived from file_field.value, whose length is already
+            // validated <= maxInt(i64) above, so the @intCast can never overflow.
             const is_pdf = isPdf(original_name) or pricing.isPdfContent(file_field.value);
             if (is_pdf) {
                 page_count = @intCast(pricing.countPdfPages(file_field.value));
-                price_cents = pricing.priceForPages(@intCast(page_count));
             } else if (pricing.isTextContent(file_field.value)) {
                 char_count = @intCast(pricing.countChars(file_field.value));
-                price_cents = pricing.priceForChars(@intCast(char_count));
             } else {
                 page_count = @intCast(pricing.estimateDocPages(file_field.value.len, original_name));
-                price_cents = pricing.priceForPages(@intCast(page_count));
             }
         }
+        const effective_chars = pricing.effectiveChars(char_count, page_count);
+        price_cents = pricing.priceForFile(original_name, effective_chars, a.config.otranslator_glossary_name.len > 0 and access.project.use_glossary);
     }
 
     const file_id = try db_files.store(
@@ -907,6 +1257,14 @@ pub fn handleUploadFile(req: *httpz.Request, res: *httpz.Response) !void {
         page_count,
         price_cents,
     );
+
+    var audit_buf: [256]u8 = undefined;
+    const audit_details = std.fmt.bufPrint(&audit_buf,
+        "{s}; category={s}; bytes={d}; price_cents={d}",
+        .{ original_name, category, file_size, price_cents },
+    ) catch original_name;
+    recordRateAction(req, user, "upload_file", access.project_id, file_id, audit_details);
+    recordAudit(req, user, "upload_file", "file", access.project_id, file_id, audit_details);
 
     // Extract text content for quoting (source/reference/translated files)
     if (std.mem.eql(u8, category, "source") or std.mem.eql(u8, category, "reference") or std.mem.eql(u8, category, "translated")) {
@@ -994,7 +1352,7 @@ pub fn handleDeleteFile(req: *httpz.Request, res: *httpz.Response) !void {
     const a = app();
 
     var find = try a.db.prepare(
-        "SELECT storage_path FROM files WHERE id = ? AND project_id = ? LIMIT 1",
+        "SELECT storage_path, uploader_id FROM files WHERE id = ? AND project_id = ? LIMIT 1",
     );
     defer find.deinit();
     try find.bindInt(1, file_id);
@@ -1006,6 +1364,12 @@ pub fn handleDeleteFile(req: *httpz.Request, res: *httpz.Response) !void {
     }
 
     const file_path = try dupOrEmpty(res.arena, find.columnText(0));
+    const uploader_id = find.columnInt(1);
+    if (!user.is_admin and access.role != .owner and uploader_id != user.id) {
+        jsonError(res, 403, "Учасник може видаляти лише власні файли.");
+        return;
+    }
+
     storage.deleteFile(file_path) catch |err| {
         std.log.warn("Failed to delete file from storage: {}", .{err});
     };
@@ -1017,6 +1381,8 @@ pub fn handleDeleteFile(req: *httpz.Request, res: *httpz.Response) !void {
     try delete_stmt.bindInt(1, file_id);
     try delete_stmt.bindInt(2, access.project_id);
     try delete_stmt.exec();
+
+    recordAudit(req, user, "delete_file", "file", access.project_id, file_id, file_path);
 
     try res.json(.{ .ok = true }, .{});
 }
@@ -1146,6 +1512,7 @@ pub fn handleGetFileContent(req: *httpz.Request, res: *httpz.Response) !void {
             const pages = pricing.countPdfPages(data);
             break :blk std.fmt.bufPrint(&info_buf, "[PDF документ, ~{d} стор., {d} байт]\n\nТекст цього файлу не вдалося витягти автоматично.", .{ pages, data.len }) catch "PDF документ";
         } else blk: {
+            // data.len is usize -> u64 param; identity on 64-bit target, cannot overflow.
             const pages = pricing.estimateDocPages(@intCast(data.len), file_name);
             break :blk std.fmt.bufPrint(&info_buf, "[Документ, ~{d} стор., {d} байт]\n\nТекст цього файлу не вдалося витягти автоматично.", .{ pages, data.len }) catch "Документ";
         };
@@ -1200,6 +1567,7 @@ pub fn handleDownloadFile(req: *httpz.Request, res: *httpz.Response) !void {
     res.header("Content-Type", getMimeType(original_name));
     res.header("Cache-Control", "private, max-age=300");
     res.body = file_data;
+    recordAudit(req, user, "download_file", "file", access.project_id, file_id, original_name);
 }
 
 fn getMimeType(name: []const u8) []const u8 {
@@ -1322,6 +1690,13 @@ pub fn handleCreateInvite(req: *httpz.Request, res: *httpz.Response) !void {
     const access = parseProjectAccess(req, res, user) orelse return;
     const a = app();
 
+    if (!user.is_admin and access.role != .owner) {
+        jsonError(res, 403, "Лише власник може створити посилання-запрошення.");
+        return;
+    }
+
+    recordAudit(req, user, "create_invite", "invite", access.project_id, access.project_id, access.project.invite_code);
+
     try res.json(.{
         .invite_code = access.project.invite_code,
         .invite_link = try inviteLink(res.arena, a.config.bot_username, access.project.invite_code),
@@ -1367,6 +1742,8 @@ pub fn handleRemoveMember(req: *httpz.Request, res: *httpz.Response) !void {
     try delete_stmt.bindInt(1, member_id);
     try delete_stmt.bindInt(2, access.project_id);
     try delete_stmt.exec();
+
+    recordAudit(req, user, "remove_member", "team_member", access.project_id, member_id, "team member removed");
 
     try res.json(.{ .ok = true }, .{});
 }
@@ -1446,6 +1823,8 @@ pub fn handleApproveGlossary(req: *httpz.Request, res: *httpz.Response) !void {
         try stmt.exec();
     }
 
+    recordAudit(req, user, "approve_glossary", "glossary_term", access.project_id, null, "terms approved");
+
     try res.json(.{ .ok = true, .updated = payload.term_ids.len }, .{});
 }
 
@@ -1479,6 +1858,8 @@ pub fn handleRejectGlossary(req: *httpz.Request, res: *httpz.Response) !void {
         try stmt.bindInt(2, term_id);
         try stmt.exec();
     }
+
+    recordAudit(req, user, "reject_glossary", "glossary_term", access.project_id, null, "terms rejected");
 
     try res.json(.{ .ok = true, .deleted = payload.term_ids.len }, .{});
 }
@@ -1548,6 +1929,8 @@ pub fn handleUpdateGlossaryTerm(req: *httpz.Request, res: *httpz.Response) !void
         try update_stmt.exec();
     }
 
+    recordAudit(req, user, "update_glossary_term", "glossary_term", access.project_id, term_id, "glossary term updated");
+
     try res.json(.{ .ok = true, .term_id = term_id }, .{});
 }
 
@@ -1573,6 +1956,7 @@ pub fn handleExportGlossary(req: *httpz.Request, res: *httpz.Response) !void {
         .filename = "glossary.tsv",
         .content = content,
     }, .{});
+    recordAudit(req, user, "export_glossary", "glossary", access.project_id, access.project_id, "glossary exported");
 }
 
 pub fn handleSyncDeepL(req: *httpz.Request, res: *httpz.Response) !void {
@@ -1638,7 +2022,7 @@ pub fn handleSyncDeepL(req: *httpz.Request, res: *httpz.Response) !void {
     });
 
     const glossary_id = created.glossary_id orelse {
-        jsonError(res, 502, "DeepL не повернув glossary_id.");
+        jsonError(res, 502, "Сервіс глосарію не повернув ідентифікатор.");
         return;
     };
     const entry_count = if (created.dictionaries) |dicts|
@@ -1677,6 +2061,8 @@ pub fn handleSyncDeepL(req: *httpz.Request, res: *httpz.Response) !void {
         try insert_stmt.bindInt(7, std.time.timestamp());
         try insert_stmt.exec();
     }
+
+    recordAudit(req, user, "sync_glossary", "glossary", access.project_id, access.project_id, glossary_id);
 
     try res.json(.{
         .ok = true,
@@ -1745,6 +2131,8 @@ pub fn handleImportGlossary(req: *httpz.Request, res: *httpz.Response) !void {
         imported += 1;
     }
 
+    recordAudit(req, user, "import_glossary", "glossary", access.project_id, access.project_id, "glossary imported");
+
     try res.json(.{ .imported = imported }, .{});
 }
 
@@ -1789,13 +2177,15 @@ pub fn handlePricing(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const access = parseProjectAccess(req, res, user) orelse return;
     const a = app();
+    const has_glossary = a.config.otranslator_glossary_name.len > 0 and access.project.use_glossary;
+    const target_count = targetLanguageCount(access.project.target_lang);
 
     // Get aggregate stats
     var stmt = try a.db.prepare(
         \\SELECT COUNT(*), COALESCE(SUM(char_count), 0), COALESCE(SUM(page_count), 0),
         \\       COALESCE(SUM(estimated_price_cents), 0)
         \\FROM files
-        \\WHERE project_id = ?
+        \\WHERE project_id = ? AND category = 'source'
     );
     defer stmt.deinit();
     try stmt.bindInt(1, access.project_id);
@@ -1813,7 +2203,7 @@ pub fn handlePricing(req: *httpz.Request, res: *httpz.Response) !void {
 
     // Get per-file details
     var file_stmt = try a.db.prepare(
-        \\SELECT id, file_name, char_count, page_count, estimated_price_cents
+        \\SELECT id, original_name, char_count, page_count
         \\FROM files
         \\WHERE project_id = ? AND category = 'source'
         \\ORDER BY created_at ASC
@@ -1825,28 +2215,70 @@ pub fn handlePricing(req: *httpz.Request, res: *httpz.Response) !void {
         id: i64,
         name: []const u8,
         chars: i64,
+        billable_chars: i64,
         pages: i64,
+        units: i64,
+        rate_cents: i64,
         price_cents: i64,
+        total_cents: i64,
+        complex_format: bool,
+        supported: bool,
+        previewable: bool,
+        preflight_status: []const u8,
+        preflight_note: []const u8,
     };
     var files_list = std.ArrayList(FileInfo).init(res.arena);
+    var one_target_total: i64 = 0;
     while (try file_stmt.step()) {
+        const file_name = try dupOrEmpty(res.arena, file_stmt.columnText(1));
+        const chars = file_stmt.columnInt(2);
+        const pages = file_stmt.columnInt(3);
+        const effective_chars = pricing.effectiveChars(chars, pages);
+        // unitsForChars(x) <= x and effective_chars derives from i64 columns -> fits i64.
+        const units: i64 = @intCast(pricing.unitsForChars(effective_chars));
+        const rate = pricing.rateForFile(file_name, has_glossary);
+        const per_target_price = pricing.priceForFile(file_name, effective_chars, has_glossary);
+        const supported = isSupportedTranslationFormat(file_name);
+        const is_scanned_pdf = extEquals(file_name, ".pdf") and pages > 0 and chars < pages * 100;
+        const preflight_status: []const u8 = if (!supported)
+            "review"
+        else if (isImageFormat(file_name) or is_scanned_pdf)
+            "ocr"
+        else
+            "ready";
+        const preflight_note: []const u8 = if (!supported)
+            "Формат потребує ручної перевірки перед оплатою."
+        else if (isImageFormat(file_name))
+            "Зображення буде оброблено як OCR/скан."
+        else if (is_scanned_pdf)
+            "PDF схожий на скан або містить мало видимого тексту; розрахунок виконано за сторінками."
+        else if (pricing.isComplexOtranslatorFormat(file_name))
+            "Формат потребує розширеної обробки зі збереженням структури."
+        else
+            "Файл готовий до перекладу.";
+        one_target_total += per_target_price;
         try files_list.append(.{
             .id = file_stmt.columnInt(0),
-            .name = try dupOrEmpty(res.arena, file_stmt.columnText(1)),
-            .chars = file_stmt.columnInt(2),
-            .pages = file_stmt.columnInt(3),
-            .price_cents = file_stmt.columnInt(4),
+            .name = file_name,
+            .chars = chars,
+            // effective_chars (u64) derives from i64 DB columns -> fits i64.
+            .billable_chars = @as(i64, @intCast(effective_chars)),
+            .pages = pages,
+            .units = units,
+            .rate_cents = rate,
+            .price_cents = per_target_price,
+            .total_cents = per_target_price * target_count,
+            .complex_format = pricing.isComplexOtranslatorFormat(file_name),
+            .supported = supported,
+            .previewable = isPreviewableFormat(file_name),
+            .preflight_status = preflight_status,
+            .preflight_note = preflight_note,
         });
     }
 
-    // Calculate translation tier pricing
-    var optimum_total: i64 = 0;
-    var ultra_total: i64 = 0;
-    for (files_list.items) |f| {
-        const chars: u64 = @intCast(if (f.chars > 0) f.chars else if (f.pages > 0) f.pages * 1800 else 0);
-        optimum_total += pricing.priceTranslationOptimum(chars);
-        ultra_total += pricing.priceTranslationUltra(chars);
-    }
+    total_price_cents = one_target_total * target_count;
+    const paid_translation_cents = try paidAmountForInvoiceType(&a.db, access.project_id, "translation");
+    const due_translation_cents = if (total_price_cents > paid_translation_cents) total_price_cents - paid_translation_cents else 0;
 
     // Get workflow stage
     var stage_str: []const u8 = "files_uploaded";
@@ -1858,20 +2290,183 @@ pub fn handlePricing(req: *httpz.Request, res: *httpz.Response) !void {
         if (stage_str.len == 0) stage_str = "files_uploaded";
     }
 
+    const JobInfo = struct {
+        id: i64,
+        source_file_id: i64,
+        source_name: []const u8,
+        target_lang: []const u8,
+        status: []const u8,
+        label: []const u8,
+        result_file_id: i64,
+        result_name: []const u8,
+        created_at: i64,
+        completed_at: i64,
+        can_compare: bool,
+    };
+    var jobs_list = std.ArrayList(JobInfo).init(res.arena);
+    var completed_jobs: i64 = 0;
+    var active_jobs: i64 = 0;
+    var review_jobs: i64 = 0;
+    var pending_jobs: i64 = 0;
+    var processing_jobs: i64 = 0;
+    var waiting_credit_jobs: i64 = 0;
+    var external_pending_jobs: i64 = 0;
+    var failed_jobs: i64 = 0;
+    var job_stmt = try a.db.prepare(
+        \\SELECT j.id, j.source_file_id, COALESCE(sf.original_name, ''), j.target_lang,
+        \\       j.status, COALESCE(j.result_file_id, 0), COALESCE(tf.original_name, ''),
+        \\       j.created_at, COALESCE(j.completed_at, 0)
+        \\FROM translation_jobs j
+        \\LEFT JOIN files sf ON sf.id = j.source_file_id
+        \\LEFT JOIN files tf ON tf.id = j.result_file_id
+        \\WHERE j.project_id = ?
+        \\ORDER BY j.created_at ASC, j.id ASC
+    );
+    defer job_stmt.deinit();
+    try job_stmt.bindInt(1, access.project_id);
+    while (try job_stmt.step()) {
+        const raw_status = job_stmt.columnText(4) orelse "processing";
+        const status = publicJobStatus(raw_status);
+        if (std.mem.eql(u8, status, "completed")) {
+            completed_jobs += 1;
+        } else if (std.mem.eql(u8, status, "review")) {
+            review_jobs += 1;
+        } else {
+            active_jobs += 1;
+        }
+        if (std.mem.eql(u8, raw_status, "pending")) {
+            pending_jobs += 1;
+        } else if (std.mem.eql(u8, raw_status, "processing")) {
+            processing_jobs += 1;
+        } else if (std.mem.eql(u8, raw_status, "waiting_credits")) {
+            waiting_credit_jobs += 1;
+        } else if (std.mem.eql(u8, raw_status, "external_timeout_pending")) {
+            external_pending_jobs += 1;
+        } else if (std.mem.eql(u8, raw_status, "failed")) {
+            failed_jobs += 1;
+        }
+        const result_file_id = job_stmt.columnInt(5);
+        try jobs_list.append(.{
+            .id = job_stmt.columnInt(0),
+            .source_file_id = job_stmt.columnInt(1),
+            .source_name = try dupOrEmpty(res.arena, job_stmt.columnText(2)),
+            .target_lang = try dupOrEmpty(res.arena, job_stmt.columnText(3)),
+            .status = status,
+            .label = publicJobLabel(raw_status),
+            .result_file_id = result_file_id,
+            .result_name = try dupOrEmpty(res.arena, job_stmt.columnText(6)),
+            .created_at = job_stmt.columnInt(7),
+            .completed_at = job_stmt.columnInt(8),
+            .can_compare = result_file_id > 0,
+        });
+    }
+
+    const expected_jobs = total_files * target_count;
+    var progress_percent: i64 = 0;
+    if (expected_jobs > 0) {
+        const weighted_units =
+            completed_jobs * 100 +
+            review_jobs * 100 +
+            processing_jobs * 55 +
+            external_pending_jobs * 35 +
+            waiting_credit_jobs * 20 +
+            pending_jobs * 10;
+        progress_percent = @divTrunc(weighted_units, expected_jobs);
+        if (progress_percent > 100) progress_percent = 100;
+        if (progress_percent < 0) progress_percent = 0;
+    }
+    if (std.mem.eql(u8, stage_str, "completed")) progress_percent = 100;
+    if (std.mem.eql(u8, stage_str, "translation_processing") and expected_jobs > 0 and progress_percent == 0) {
+        progress_percent = 5;
+    }
+
     try res.json(.{
         .pricing = .{
             .total_files = total_files,
             .total_chars = total_chars,
             .total_pages = total_pages,
             .total_price_cents = total_price_cents,
+            .paid_translation_cents = paid_translation_cents,
+            .due_translation_cents = due_translation_cents,
             .currency = "EUR",
+            .source_lang = access.project.source_lang,
+            .target_lang = access.project.target_lang,
+            .target_language_count = target_count,
+            .uses_glossary = has_glossary,
+            .glossary_available = a.config.otranslator_glossary_name.len > 0,
+            .rates = .{
+                .text_no_glossary_cents = @as(i64, pricing.RATE_TEXT_NO_GLOSSARY_CENTS),
+                .text_glossary_cents = @as(i64, pricing.RATE_TEXT_GLOSSARY_CENTS),
+                .complex_glossary_cents = @as(i64, pricing.RATE_COMPLEX_GLOSSARY_CENTS),
+                .chars_per_unit = @as(i64, @intCast(pricing.CHARS_PER_UNIT)),
+            },
             .translation = .{
-                .optimum = .{ .total_cents = optimum_total, .per_page_cents = @as(i64, 91) },
-                .ultra = .{ .total_cents = ultra_total, .per_page_cents = @as(i64, 135) },
+                .optimum = .{ .total_cents = total_price_cents, .per_page_cents = @as(i64, pricing.RATE_TEXT_GLOSSARY_CENTS) },
+                .ultra = .{ .total_cents = total_price_cents, .per_page_cents = @as(i64, pricing.RATE_COMPLEX_GLOSSARY_CENTS) },
             },
         },
         .files = try files_list.toOwnedSlice(),
+        .translation_status = .{
+            .expected_jobs = expected_jobs,
+            .created_jobs = @as(i64, @intCast(jobs_list.items.len)),
+            .completed_jobs = completed_jobs,
+            .active_jobs = active_jobs,
+            .review_jobs = review_jobs,
+            .pending_jobs = pending_jobs,
+            .processing_jobs = processing_jobs,
+            .waiting_credit_jobs = waiting_credit_jobs,
+            .external_pending_jobs = external_pending_jobs,
+            .failed_jobs = failed_jobs,
+            .progress_percent = progress_percent,
+            .paid_cents = paid_translation_cents,
+            .due_cents = due_translation_cents,
+        },
+        .jobs = try jobs_list.toOwnedSlice(),
         .workflow_stage = stage_str,
+    }, .{});
+}
+
+pub fn handleTranslationOptions(req: *httpz.Request, res: *httpz.Response) !void {
+    _ = authenticate(req, res) orelse return;
+    const a = app();
+
+    const fallback_languages = [_][]const u8{
+        "German", "Ukrainian", "English", "Polish", "French", "Spanish",
+        "Italian", "Dutch", "Czech", "Slovak", "Romanian", "Russian",
+        "Portuguese", "Swedish", "Danish", "Finnish",
+    };
+    const fallback_filetypes = [_][]const u8{
+        "txt", "doc", "docx", "rtf", "pdf", "xls", "xlsx", "ppt", "pptx",
+        "wps", "et", "dps", "odt", "ods", "odp", "epub", "chm", "ai", "indd",
+        "idml", "html", "xml", "json", "resjson", "csv", "tsv", "md", "srt",
+        "ass", "ssa", "vtt", "po", "xlf", "xliff", "go", "yml", "yaml", "php",
+        "plist", "stringsdict", "tex", "arxiv", "jpg", "jpeg", "png", "webp", "svg",
+    };
+
+    var languages: []const []const u8 = fallback_languages[0..];
+    var filetypes: []const []const u8 = fallback_filetypes[0..];
+
+    if (processor_client.fetchJsonEndpoint(res.arena, &a.config, "/ultra/languages")) |raw| {
+        const Parsed = struct { languages: ?[]const []const u8 = null };
+        if (std.json.parseFromSliceLeaky(Parsed, res.arena, raw, .{ .ignore_unknown_fields = true })) |parsed| {
+            if (parsed.languages) |items| {
+                if (items.len > 0) languages = items;
+            }
+        } else |_| {}
+    } else |_| {}
+
+    if (processor_client.fetchJsonEndpoint(res.arena, &a.config, "/ultra/filetypes")) |raw| {
+        const Parsed = struct { types: ?[]const []const u8 = null };
+        if (std.json.parseFromSliceLeaky(Parsed, res.arena, raw, .{ .ignore_unknown_fields = true })) |parsed| {
+            if (parsed.types) |items| {
+                if (items.len > 0) filetypes = items;
+            }
+        } else |_| {}
+    } else |_| {}
+
+    try res.json(.{
+        .languages = languages,
+        .filetypes = filetypes,
     }, .{});
 }
 
@@ -1880,79 +2475,165 @@ pub fn handleCreateInvoice(req: *httpz.Request, res: *httpz.Response) !void {
     const access = parseProjectAccess(req, res, user) orelse return;
     const a = app();
 
+    if (!user.is_admin and access.role != .owner) {
+        jsonError(res, 403, "Лише власник замовлення може створювати рахунок.");
+        return;
+    }
+
+    if (!enforceUserActionLimit(req, res, user, "create_invoice", 6, 3600)) return;
+    if (!enforceUserActionLimit(req, res, user, "create_invoice", 20, 86400)) return;
+
     // Parse optional body with invoice type and tier
     const Body = struct {
         type: ?[]const u8 = null,
         tier: ?[]const u8 = null,
+        target_lang: ?[]const u8 = null,
+        use_glossary: ?bool = null,
     };
     const payload = (try req.json(Body)) orelse Body{};
-    const invoice_type = payload.type orelse "glossary";
+    const invoice_type = payload.type orelse "translation";
     const tier = payload.tier;
+
+    if (!std.mem.eql(u8, invoice_type, "translation") and !std.mem.eql(u8, invoice_type, "glossary")) {
+        jsonError(res, 400, "Невідомий тип рахунку.");
+        return;
+    }
+
+    if (payload.target_lang) |target_lang_raw| {
+        const target_lang = std.mem.trim(u8, target_lang_raw, &std.ascii.whitespace);
+        if (target_lang.len > 0) {
+            var lang_stmt = try a.db.prepare("UPDATE projects SET target_lang = ?, updated_at = ? WHERE id = ?");
+            defer lang_stmt.deinit();
+            try lang_stmt.bindText(1, target_lang);
+            try lang_stmt.bindInt(2, std.time.timestamp());
+            try lang_stmt.bindInt(3, access.project_id);
+            try lang_stmt.exec();
+        }
+    }
+
+    if (payload.use_glossary) |use_glossary| {
+        var glossary_stmt = try a.db.prepare("UPDATE projects SET use_glossary = ?, updated_at = ? WHERE id = ?");
+        defer glossary_stmt.deinit();
+        try glossary_stmt.bindInt(1, if (use_glossary) 1 else 0);
+        try glossary_stmt.bindInt(2, std.time.timestamp());
+        try glossary_stmt.bindInt(3, access.project_id);
+        try glossary_stmt.exec();
+    }
 
     var amount_cents: i64 = 0;
     var description: []const u8 = "";
+    var quoted_total_cents: i64 = 0;
+    var paid_cents: i64 = 0;
 
     if (std.mem.eql(u8, invoice_type, "translation")) {
-        // Translation invoice — calculate based on tier
-        const tier_str = tier orelse "optimum";
+        const target_langs = payload.target_lang orelse access.project.target_lang;
+        const target_count = targetLanguageCount(target_langs);
+        const has_glossary = a.config.otranslator_glossary_name.len > 0 and (payload.use_glossary orelse access.project.use_glossary);
 
         // Get file char/page counts
         var file_stmt = try a.db.prepare(
-            "SELECT char_count, page_count FROM files WHERE project_id = ? AND category = 'source'",
+            "SELECT original_name, char_count, page_count FROM files WHERE project_id = ? AND category = 'source'",
         );
         defer file_stmt.deinit();
         try file_stmt.bindInt(1, access.project_id);
 
+        var one_target_total: i64 = 0;
         while (try file_stmt.step()) {
-            const chars = file_stmt.columnInt(0);
-            const pages = file_stmt.columnInt(1);
-            const effective_chars: u64 = @intCast(if (chars > 0) chars else if (pages > 0) pages * 1800 else 0);
-            if (std.mem.eql(u8, tier_str, "ultra")) {
-                amount_cents += pricing.priceTranslationUltra(effective_chars);
-            } else {
-                amount_cents += pricing.priceTranslationOptimum(effective_chars);
+            const file_name = file_stmt.columnText(0) orelse "";
+            if (!isSupportedTranslationFormat(file_name)) {
+                jsonError(res, 400, "Один або кілька файлів потребують перевірки перед оплатою.");
+                return;
             }
+            const chars = file_stmt.columnInt(1);
+            const pages = file_stmt.columnInt(2);
+            const effective_chars = pricing.effectiveChars(chars, pages);
+            one_target_total += pricing.priceForFile(file_name, effective_chars, has_glossary);
         }
+        quoted_total_cents = one_target_total * target_count;
+        paid_cents = try paidAmountForInvoiceType(&a.db, access.project_id, "translation");
+        amount_cents = quoted_total_cents - paid_cents;
 
-        if (amount_cents <= 0) {
+        if (quoted_total_cents <= 0) {
             jsonError(res, 400, "Немає файлів для перекладу.");
             return;
         }
+        if (amount_cents <= 0) {
+            jsonError(res, 400, "Поточний обсяг перекладу вже оплачено.");
+            return;
+        }
 
-        const tier_label: []const u8 = if (std.mem.eql(u8, tier_str, "ultra")) "Ультра" else "Оптимум";
-        description = try std.fmt.allocPrint(res.arena, "KI Beratung \u{2014} Переклад ({s}) \u{2014} {s}", .{ tier_label, access.project.name });
+        description = try std.fmt.allocPrint(res.arena, "Переклад документів \u{2014} {s}", .{access.project.name});
     } else {
         // Glossary invoice — use existing estimated_price_cents
-        amount_cents = try db_files.totalPriceForProject(&a.db, access.project_id);
-        if (amount_cents <= 0) {
+        quoted_total_cents = try db_files.totalPriceForProject(&a.db, access.project_id);
+        paid_cents = try paidAmountForInvoiceType(&a.db, access.project_id, "glossary");
+        amount_cents = quoted_total_cents - paid_cents;
+        if (quoted_total_cents <= 0) {
             jsonError(res, 400, "Для цього проєкту ще немає файлів для виставлення рахунку.");
             return;
         }
-        description = try std.fmt.allocPrint(res.arena, "KI Beratung \u{2014} Глосарій \u{2014} {s}", .{access.project.name});
+        if (amount_cents <= 0) {
+            jsonError(res, 400, "Поточний обсяг уже оплачено.");
+            return;
+        }
+        description = try std.fmt.allocPrint(res.arena, "Додаткова послуга \u{2014} {s}", .{access.project.name});
+    }
+
+    if (a.config.stripe_secret_key.len == 0) {
+        var cfg_buf: [384]u8 = undefined;
+        const cfg_msg = std.fmt.bufPrint(&cfg_buf,
+            "Критична помилка оплати: STRIPE_SECRET_KEY не налаштовано. User TG {d}, Project ID {d}, amount {d} cents.",
+            .{ user.telegram_id, access.project_id, amount_cents },
+        ) catch "STRIPE_SECRET_KEY не налаштовано.";
+        handler.notifyAdmin(cfg_msg);
+        jsonError(res, 503, "Оплата тимчасово недоступна. Адміністратор уже отримав сповіщення.");
+        return;
+    }
+
+    try supersedeStalePendingInvoices(&a.db, access.project_id, invoice_type, amount_cents);
+    if (try findReusablePendingInvoice(res.arena, &a.db, access.project_id, invoice_type, amount_cents)) |pending| {
+        recordRateAction(req, user, "create_invoice", access.project_id, pending.id, "reused pending invoice");
+        recordAudit(req, user, "reuse_invoice", "invoice", access.project_id, pending.id, pending.payment_url);
+        res.status = 200;
+        try res.json(.{
+            .invoice_id = pending.id,
+            .amount_cents = amount_cents,
+            .quoted_total_cents = quoted_total_cents,
+            .paid_cents = paid_cents,
+            .due_cents = amount_cents,
+            .currency = "EUR",
+            .payment_url = pending.payment_url,
+            .reused = true,
+        }, .{});
+        return;
     }
 
     var stripe_session_id: ?[]const u8 = null;
     var payment_url: ?[]const u8 = null;
 
-    if (a.config.stripe_secret_key.len > 0) {
-        const session = createStripeCheckoutSession(
-            res.arena,
-            a.config.stripe_secret_key,
-            amount_cents,
-            description,
-            a.config.mini_app_url,
-            access.project_id,
-            user.telegram_id,
-            invoice_type,
-            tier,
-        ) catch |err| {
-            std.log.err("Stripe checkout session failed: {}", .{err});
-            jsonError(res, 502, "Не вдалося створити платіжну сесію.");
-            return;
-        };
-        stripe_session_id = session.id;
-        payment_url = session.url;
-    }
+    const session = createStripeCheckoutSession(
+        res.arena,
+        a.config.stripe_secret_key,
+        amount_cents,
+        description,
+        a.config.mini_app_url,
+        access.project_id,
+        user.telegram_id,
+        invoice_type,
+        tier,
+    ) catch |err| {
+        std.log.err("Stripe checkout session failed: {}", .{err});
+        var err_buf: [384]u8 = undefined;
+        const err_msg = std.fmt.bufPrint(&err_buf,
+            "Stripe checkout session failed.\nProject ID: {d}\nUser TG: {d}\nAmount: {d} cents\nError: {}",
+            .{ access.project_id, user.telegram_id, amount_cents, err },
+        ) catch "Stripe checkout session failed.";
+        handler.notifyAdmin(err_msg);
+        jsonError(res, 502, "Не вдалося створити платіжну сесію.");
+        return;
+    };
+    stripe_session_id = session.id;
+    payment_url = session.url;
 
     var stmt = try a.db.prepare(
         \\INSERT INTO invoices
@@ -1967,7 +2648,7 @@ pub fn handleCreateInvoice(req: *httpz.Request, res: *httpz.Response) !void {
     try stmt.bindText(4, description);
     try stmt.bindText(5, stripe_session_id);
     try stmt.bindText(6, payment_url);
-    try stmt.bindText(7, if (payment_url != null) "pending" else "manual_review");
+    try stmt.bindText(7, "pending");
     try stmt.bindText(8, invoice_type);
     try stmt.bindText(9, tier);
     try stmt.bindInt(10, std.time.timestamp());
@@ -1977,7 +2658,7 @@ pub fn handleCreateInvoice(req: *httpz.Request, res: *httpz.Response) !void {
 
     if (payment_url) |url| {
         const msg = try std.fmt.allocPrint(res.arena,
-            "Рахунок для проєкту <b>{s}</b> створено.\n\nСума: \u{20ac}{d}.{d:0>2}\nОплата: {s}",
+            "Рахунок для проєкту <b>{s}</b> створено.\n\nДо оплати: \u{20ac}{d}.{d:0>2}\nОплата: {s}",
             .{
                 access.project.name,
                 @divTrunc(amount_cents, 100),
@@ -1989,21 +2670,40 @@ pub fn handleCreateInvoice(req: *httpz.Request, res: *httpz.Response) !void {
         if (tg_resp) |resp_body| {
             a.allocator.free(resp_body);
         }
-    } else {
+
         const admin_note = try std.fmt.allocPrint(res.arena,
-            "Створено manual invoice для проєкту <b>{s}</b>, user_id={d}, amount={d} cents, type={s}",
-            .{ access.project.name, user.telegram_id, amount_cents, invoice_type },
+            "Створено Stripe invoice.\nProject: <b>{s}</b> #{d}\nUser TG: {d}\nType: {s}\nQuoted: €{d}.{d:0>2}\nPaid before: €{d}.{d:0>2}\nDue: €{d}.{d:0>2}",
+            .{
+                access.project.name,
+                access.project_id,
+                user.telegram_id,
+                invoice_type,
+                @divTrunc(quoted_total_cents, 100),
+                @mod(quoted_total_cents, 100),
+                @divTrunc(paid_cents, 100),
+                @mod(paid_cents, 100),
+                @divTrunc(amount_cents, 100),
+                @mod(amount_cents, 100),
+            },
         );
-        const tg_resp = a.tg.sendMessage(a.config.admin_chat_id, admin_note, null) catch null;
-        if (tg_resp) |resp_body| {
-            a.allocator.free(resp_body);
-        }
+        handler.notifyAdmin(admin_note);
     }
+
+    var audit_buf: [256]u8 = undefined;
+    const audit_details = std.fmt.bufPrint(&audit_buf,
+        "type={s}; quoted={d}; paid={d}; due={d}",
+        .{ invoice_type, quoted_total_cents, paid_cents, amount_cents },
+    ) catch "invoice created";
+    recordRateAction(req, user, "create_invoice", access.project_id, invoice_id, audit_details);
+    recordAudit(req, user, "create_invoice", "invoice", access.project_id, invoice_id, audit_details);
 
     res.status = 201;
     try res.json(.{
         .invoice_id = invoice_id,
         .amount_cents = amount_cents,
+        .quoted_total_cents = quoted_total_cents,
+        .paid_cents = paid_cents,
+        .due_cents = amount_cents,
         .currency = "EUR",
         .payment_url = payment_url,
     }, .{});
@@ -2057,6 +2757,249 @@ pub fn handleListInvoices(req: *httpz.Request, res: *httpz.Response) !void {
     try res.json(.{ .invoices = try items.toOwnedSlice() }, .{});
 }
 
+pub fn handleProjectAudit(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
+    try writeAuditRows(res, access.project_id);
+}
+
+pub fn handleAdminAudit(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    if (!user.is_admin) {
+        jsonError(res, 403, "Тільки адміністратор може переглядати глобальний audit log.");
+        return;
+    }
+    try writeAuditRows(res, null);
+}
+
+pub fn handleAdminStatus(req: *httpz.Request, res: *httpz.Response) !void {
+    const user = authenticate(req, res) orelse return;
+    if (!user.is_admin) {
+        jsonError(res, 403, "Тільки адміністратор може переглядати стан системи.");
+        return;
+    }
+
+    const a = app();
+
+    var balance_known = false;
+    var balance_value: f64 = 0;
+    var balance_error: []const u8 = "";
+    if (processor_client.fetchJsonEndpoint(res.arena, &a.config, "/ultra/balance")) |raw| {
+        const BalanceResponse = struct {
+            balance: ?f64 = null,
+        };
+        if (std.json.parseFromSlice(BalanceResponse, res.arena, raw, .{ .ignore_unknown_fields = true })) |parsed| {
+            defer parsed.deinit();
+            if (parsed.value.balance) |balance| {
+                balance_known = true;
+                balance_value = balance;
+            } else {
+                balance_error = "missing_balance";
+            }
+        } else |err| {
+            balance_error = @errorName(err);
+        }
+    } else |err| {
+        balance_error = @errorName(err);
+    }
+
+    var counts_stmt = try a.db.prepare(
+        \\SELECT
+        \\  COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0),
+        \\  COALESCE(SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END), 0),
+        \\  COALESCE(SUM(CASE WHEN status = 'waiting_credits' THEN 1 ELSE 0 END), 0),
+        \\  COALESCE(SUM(CASE WHEN status = 'external_timeout_pending' THEN 1 ELSE 0 END), 0),
+        \\  COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0),
+        \\  COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0)
+        \\FROM translation_jobs
+    );
+    defer counts_stmt.deinit();
+
+    var pending_jobs: i64 = 0;
+    var processing_jobs: i64 = 0;
+    var waiting_credit_jobs: i64 = 0;
+    var external_pending_jobs: i64 = 0;
+    var failed_jobs: i64 = 0;
+    var completed_jobs: i64 = 0;
+    if (try counts_stmt.step()) {
+        pending_jobs = counts_stmt.columnInt(0);
+        processing_jobs = counts_stmt.columnInt(1);
+        waiting_credit_jobs = counts_stmt.columnInt(2);
+        external_pending_jobs = counts_stmt.columnInt(3);
+        failed_jobs = counts_stmt.columnInt(4);
+        completed_jobs = counts_stmt.columnInt(5);
+    }
+
+    var retry_stmt = try a.db.prepare(
+        \\SELECT
+        \\  COALESCE(MIN(next_retry_at), 0),
+        \\  COALESCE(MAX(balance_retry_count), 0),
+        \\  COALESCE(MIN(last_balance_retry_at), 0)
+        \\FROM translation_jobs
+        \\WHERE status = 'waiting_credits'
+    );
+    defer retry_stmt.deinit();
+
+    var next_balance_retry_at: i64 = 0;
+    var max_balance_retry_count: i64 = 0;
+    var first_balance_wait_at: i64 = 0;
+    if (try retry_stmt.step()) {
+        next_balance_retry_at = retry_stmt.columnInt(0);
+        max_balance_retry_count = retry_stmt.columnInt(1);
+        first_balance_wait_at = retry_stmt.columnInt(2);
+    }
+
+    var project_stmt = try a.db.prepare(
+        \\SELECT
+        \\  COALESCE(SUM(CASE WHEN workflow_stage = 'translation_processing' THEN 1 ELSE 0 END), 0),
+        \\  COALESCE(SUM(CASE WHEN workflow_stage = 'payment_required' THEN 1 ELSE 0 END), 0),
+        \\  COALESCE(SUM(CASE WHEN translation_worker_running = 1 THEN 1 ELSE 0 END), 0)
+        \\FROM projects
+        \\WHERE is_active = 1
+    );
+    defer project_stmt.deinit();
+
+    var processing_projects: i64 = 0;
+    var payment_required_projects: i64 = 0;
+    var running_workers: i64 = 0;
+    if (try project_stmt.step()) {
+        processing_projects = project_stmt.columnInt(0);
+        payment_required_projects = project_stmt.columnInt(1);
+        running_workers = project_stmt.columnInt(2);
+    }
+
+    const WaitingJob = struct {
+        job_id: i64,
+        project_id: i64,
+        project_name: []const u8,
+        file_name: []const u8,
+        target_lang: []const u8,
+        retry_count: i64,
+        next_retry_at: i64,
+        last_balance_retry_at: i64,
+        last_state_change: i64,
+    };
+    var waiting_jobs = std.ArrayList(WaitingJob).init(res.arena);
+    var jobs_stmt = try a.db.prepare(
+        \\SELECT j.id, j.project_id, COALESCE(p.name, ''), COALESCE(f.original_name, ''),
+        \\       j.target_lang, COALESCE(j.balance_retry_count, 0), COALESCE(j.next_retry_at, 0),
+        \\       COALESCE(j.last_balance_retry_at, 0), COALESCE(j.last_state_change, 0)
+        \\FROM translation_jobs j
+        \\LEFT JOIN projects p ON p.id = j.project_id
+        \\LEFT JOIN files f ON f.id = j.source_file_id
+        \\WHERE j.status = 'waiting_credits'
+        \\ORDER BY COALESCE(j.next_retry_at, 0) ASC, j.id ASC
+        \\LIMIT 50
+    );
+    defer jobs_stmt.deinit();
+    while (try jobs_stmt.step()) {
+        try waiting_jobs.append(.{
+            .job_id = jobs_stmt.columnInt(0),
+            .project_id = jobs_stmt.columnInt(1),
+            .project_name = try dupOrEmpty(res.arena, jobs_stmt.columnText(2)),
+            .file_name = try dupOrEmpty(res.arena, jobs_stmt.columnText(3)),
+            .target_lang = try dupOrEmpty(res.arena, jobs_stmt.columnText(4)),
+            .retry_count = jobs_stmt.columnInt(5),
+            .next_retry_at = jobs_stmt.columnInt(6),
+            .last_balance_retry_at = jobs_stmt.columnInt(7),
+            .last_state_change = jobs_stmt.columnInt(8),
+        });
+    }
+
+    try res.json(.{
+        .otranslator = .{
+            .balance_known = balance_known,
+            .balance = balance_value,
+            .balance_error = balance_error,
+            .top_up_url = "https://otranslator.com/en/pricing",
+        },
+        .queue = .{
+            .pending_jobs = pending_jobs,
+            .processing_jobs = processing_jobs,
+            .waiting_credit_jobs = waiting_credit_jobs,
+            .external_pending_jobs = external_pending_jobs,
+            .failed_jobs = failed_jobs,
+            .completed_jobs = completed_jobs,
+            .processing_projects = processing_projects,
+            .payment_required_projects = payment_required_projects,
+            .running_workers = running_workers,
+            .next_balance_retry_at = next_balance_retry_at,
+            .first_balance_wait_at = first_balance_wait_at,
+            .max_balance_retry_count = max_balance_retry_count,
+        },
+        .retry_policy = .{
+            .balance_retry_interval_seconds = 5 * 60,
+            .max_balance_retries = 7 * 24 * 12,
+            .max_balance_wait_days = 7,
+        },
+        .waiting_jobs = try waiting_jobs.toOwnedSlice(),
+    }, .{});
+}
+
+fn writeAuditRows(res: *httpz.Response, project_id: ?i64) !void {
+    const a = app();
+    var stmt = if (project_id) |_|
+        try a.db.prepare(
+            \\SELECT a.id, a.user_id, COALESCE(u.first_name, ''), COALESCE(u.username, ''),
+            \\       COALESCE(a.project_id, 0), a.action, a.resource_type, COALESCE(a.resource_id, 0),
+            \\       COALESCE(a.new_value, ''), COALESCE(a.ip_address, ''), COALESCE(a.user_agent, ''),
+            \\       a.created_at
+            \\FROM audit_log a
+            \\LEFT JOIN users u ON u.id = a.user_id
+            \\WHERE a.project_id = ?
+            \\ORDER BY a.created_at DESC, a.id DESC
+            \\LIMIT 300
+        )
+    else
+        try a.db.prepare(
+            \\SELECT a.id, a.user_id, COALESCE(u.first_name, ''), COALESCE(u.username, ''),
+            \\       COALESCE(a.project_id, 0), a.action, a.resource_type, COALESCE(a.resource_id, 0),
+            \\       COALESCE(a.new_value, ''), COALESCE(a.ip_address, ''), COALESCE(a.user_agent, ''),
+            \\       a.created_at
+            \\FROM audit_log a
+            \\LEFT JOIN users u ON u.id = a.user_id
+            \\ORDER BY a.created_at DESC, a.id DESC
+            \\LIMIT 300
+        );
+    defer stmt.deinit();
+    if (project_id) |pid| try stmt.bindInt(1, pid);
+
+    const Item = struct {
+        id: i64,
+        user_id: i64,
+        user_name: []const u8,
+        username: []const u8,
+        project_id: i64,
+        action: []const u8,
+        resource_type: []const u8,
+        resource_id: i64,
+        details: []const u8,
+        ip_address: []const u8,
+        user_agent: []const u8,
+        created_at: i64,
+    };
+
+    var items = std.ArrayList(Item).init(res.arena);
+    while (try stmt.step()) {
+        try items.append(.{
+            .id = stmt.columnInt(0),
+            .user_id = stmt.columnInt(1),
+            .user_name = try dupOrEmpty(res.arena, stmt.columnText(2)),
+            .username = try dupOrEmpty(res.arena, stmt.columnText(3)),
+            .project_id = stmt.columnInt(4),
+            .action = try dupOrEmpty(res.arena, stmt.columnText(5)),
+            .resource_type = try dupOrEmpty(res.arena, stmt.columnText(6)),
+            .resource_id = stmt.columnInt(7),
+            .details = try dupOrEmpty(res.arena, stmt.columnText(8)),
+            .ip_address = try dupOrEmpty(res.arena, stmt.columnText(9)),
+            .user_agent = try dupOrEmpty(res.arena, stmt.columnText(10)),
+            .created_at = stmt.columnInt(11),
+        });
+    }
+
+    try res.json(.{ .audit = try items.toOwnedSlice() }, .{});
+}
+
 // ─── Delete Project ─────────────────────────────────────────────────────────
 
 pub fn handleDeleteProject(req: *httpz.Request, res: *httpz.Response) !void {
@@ -2078,6 +3021,8 @@ pub fn handleDeleteProject(req: *httpz.Request, res: *httpz.Response) !void {
     try stmt.bindInt(2, access.project_id);
     try stmt.exec();
 
+    recordAudit(req, user, "delete_project", "project", access.project_id, access.project_id, access.project.name);
+
     try res.json(.{ .deleted = true }, .{});
 }
 
@@ -2092,11 +3037,13 @@ pub fn handleUpdateProject(req: *httpz.Request, res: *httpz.Response) !void {
         return;
     };
 
-    // Check if user is owner
-    const is_owner = try db_projects.isOwner(&a.db, project_id, user.id);
-    if (!is_owner) {
-        jsonError(res, 403, "Лише власник може редагувати проєкт.");
-        return;
+    // Check if user is owner; admin can update any order.
+    if (!user.is_admin) {
+        const is_owner = try db_projects.isOwner(&a.db, project_id, user.id);
+        if (!is_owner) {
+            jsonError(res, 403, "Лише власник може редагувати проєкт.");
+            return;
+        }
     }
 
     const Body = struct {
@@ -2104,6 +3051,7 @@ pub fn handleUpdateProject(req: *httpz.Request, res: *httpz.Response) !void {
         description: ?[]const u8 = null,
         source_lang: ?[]const u8 = null,
         target_lang: ?[]const u8 = null,
+        use_glossary: ?bool = null,
     };
 
     const payload = (try req.json(Body)) orelse {
@@ -2148,6 +3096,17 @@ pub fn handleUpdateProject(req: *httpz.Request, res: *httpz.Response) !void {
         try stmt.exec();
     }
 
+    if (payload.use_glossary) |use_glossary| {
+        var stmt = try a.db.prepare("UPDATE projects SET use_glossary = ?, updated_at = ? WHERE id = ?");
+        defer stmt.deinit();
+        try stmt.bindInt(1, if (use_glossary) 1 else 0);
+        try stmt.bindInt(2, std.time.timestamp());
+        try stmt.bindInt(3, project_id);
+        try stmt.exec();
+    }
+
+    recordAudit(req, user, "update_project", "project", project_id, project_id, "project metadata updated");
+
     try res.json(.{ .ok = true }, .{});
 }
 pub fn handleListGlossaryVersions(req: *httpz.Request, res: *httpz.Response) !void {
@@ -2185,7 +3144,7 @@ pub fn handleListGlossaryVersions(req: *httpz.Request, res: *httpz.Response) !vo
 
 pub fn handleGetGlossaryVersion(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
-    _ = parseProjectAccess(req, res, user) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
     const a = app();
 
     const vid = parseIntParam(req, "version_id") catch {
@@ -2197,6 +3156,10 @@ pub fn handleGetGlossaryVersion(req: *httpz.Request, res: *httpz.Response) !void
         jsonError(res, 404, "Версію не знайдено.");
         return;
     };
+    if (version.project_id != access.project_id) {
+        jsonError(res, 404, "Версію не знайдено.");
+        return;
+    }
 
     try res.json(.{
         .id = version.id,
@@ -2212,7 +3175,7 @@ pub fn handleGetGlossaryVersion(req: *httpz.Request, res: *httpz.Response) !void
 
 pub fn handleGlossaryDiff(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
-    _ = parseProjectAccess(req, res, user) orelse return;
+    const access = parseProjectAccess(req, res, user) orelse return;
     const a = app();
 
     const query = req.query() catch {
@@ -2246,6 +3209,10 @@ pub fn handleGlossaryDiff(req: *httpz.Request, res: *httpz.Response) !void {
         jsonError(res, 404, "Версію B не знайдено.");
         return;
     };
+    if (ver_a.project_id != access.project_id or ver_b.project_id != access.project_id) {
+        jsonError(res, 404, "Версію не знайдено.");
+        return;
+    }
 
     // Compute diff: parse TSV into hashmaps, compare
     var map_a = std.StringHashMap([]const u8).init(res.arena);
@@ -2369,6 +3336,11 @@ pub fn handleUpdateSettings(req: *httpz.Request, res: *httpz.Response) !void {
     const access = parseProjectAccess(req, res, user) orelse return;
     const a = app();
 
+    if (!user.is_admin and access.role != .owner) {
+        jsonError(res, 403, "Лише власник може змінювати налаштування перекладу.");
+        return;
+    }
+
     const body = req.body() orelse {
         jsonError(res, 400, "Пустий запит.");
         return;
@@ -2399,6 +3371,7 @@ pub fn handleUpdateSettings(req: *httpz.Request, res: *httpz.Response) !void {
         try tier_stmt.bindText(2, parsed.value.translation_tier orelse "optimum");
         try tier_stmt.bindInt(3, now);
         try tier_stmt.exec();
+        recordAudit(req, user, "update_settings", "settings", access.project_id, access.project_id, "translation tier updated");
         try res.json(.{ .ok = true }, .{});
         return;
     }
@@ -2417,6 +3390,8 @@ pub fn handleUpdateSettings(req: *httpz.Request, res: *httpz.Response) !void {
     try stmt.bindInt(8, now);
     try stmt.exec();
 
+    recordAudit(req, user, "update_settings", "settings", access.project_id, access.project_id, "translation settings updated");
+
     try res.json(.{ .ok = true }, .{});
 }
 
@@ -2426,6 +3401,9 @@ pub fn handleSendMessage(req: *httpz.Request, res: *httpz.Response) !void {
     const user = authenticate(req, res) orelse return;
     const access = parseProjectAccess(req, res, user) orelse return;
     const a = app();
+
+    if (!enforceUserActionLimit(req, res, user, "send_message", 30, 3600)) return;
+    if (!enforceUserActionLimit(req, res, user, "send_message", 100, 86400)) return;
 
     const body = req.body() orelse {
         jsonError(res, 400, "Пустий запит.");
@@ -2476,6 +3454,7 @@ pub fn handleSendMessage(req: *httpz.Request, res: *httpz.Response) !void {
     try msg_stmt.bindText(6, uuid);
     try msg_stmt.bindInt(7, now);
     try msg_stmt.exec();
+    const message_id = a.db.lastInsertRowId();
 
     // Broadcast to WebSocket clients
     const websocket = @import("../realtime/websocket.zig");
@@ -2490,10 +3469,16 @@ pub fn handleSendMessage(req: *httpz.Request, res: *httpz.Response) !void {
     }) catch content;
     const fwd_resp = a.tg.sendMessage(a.config.admin_chat_id, fwd_text, null) catch |err| {
         std.log.err("Failed to forward message to admin: {}", .{err});
+        handler.notifyAdmin("Помилка пересилання клієнтського повідомлення адміну. Перевірте Telegram Bot API/logs.");
+        recordRateAction(req, user, "send_message", access.project_id, message_id, "message stored; Telegram forward failed");
+        recordAudit(req, user, "send_message_forward_failed", "message", access.project_id, message_id, content);
         try res.json(.{ .sent = true, .uuid = uuid }, .{});
         return;
     };
     a.allocator.free(fwd_resp);
+
+    recordRateAction(req, user, "send_message", access.project_id, message_id, "message sent to admin");
+    recordAudit(req, user, "send_message", "message", access.project_id, message_id, content);
 
     try res.json(.{ .sent = true, .uuid = uuid }, .{});
 }
@@ -2574,7 +3559,8 @@ pub fn handleAdvanceWorkflow(req: *httpz.Request, res: *httpz.Response) !void {
     const valid_stages = [_][]const u8{
         "files_uploaded",     "glossary_paid",          "glossary_review",
         "glossary_approved",  "translation_paid",       "translation_processing",
-        "translation_review", "completed",
+        "translation_review", "completed",              "completed_with_errors",
+        "payment_required",
     };
     var is_valid = false;
     for (valid_stages) |s| {
@@ -2588,12 +3574,34 @@ pub fn handleAdvanceWorkflow(req: *httpz.Request, res: *httpz.Response) !void {
         return;
     }
 
+    const requires_translation_payment =
+        std.mem.eql(u8, new_stage, "translation_paid") or
+        std.mem.eql(u8, new_stage, "translation_processing") or
+        std.mem.eql(u8, new_stage, "translation_review") or
+        std.mem.eql(u8, new_stage, "completed") or
+        std.mem.eql(u8, new_stage, "completed_with_errors");
+    if (requires_translation_payment) {
+        const coverage = try translationPaymentCoverage(res.arena, access.project_id);
+        if (coverage.required_cents <= 0 or coverage.paid_cents < coverage.required_cents) {
+            var buf: [384]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf,
+                "Workflow stage заблоковано без достатньої оплати.\nProject ID: {d}\nStage: {s}\nPaid: {d} cents\nRequired: {d} cents",
+                .{ access.project_id, new_stage, coverage.paid_cents, coverage.required_cents },
+            ) catch "Workflow stage заблоковано без достатньої оплати.";
+            handler.notifyAdmin(msg);
+            jsonError(res, 402, "Поточний обсяг перекладу ще не оплачено повністю.");
+            return;
+        }
+    }
+
     var stmt = try a.db.prepare("UPDATE projects SET workflow_stage = ?, updated_at = ? WHERE id = ?");
     defer stmt.deinit();
     try stmt.bindText(1, new_stage);
     try stmt.bindInt(2, std.time.timestamp());
     try stmt.bindInt(3, access.project_id);
     try stmt.exec();
+
+    recordAudit(req, user, "advance_workflow", "workflow", access.project_id, access.project_id, new_stage);
 
     try res.json(.{ .workflow_stage = new_stage }, .{});
 }
@@ -2629,6 +3637,8 @@ pub fn handleCreateSession(req: *httpz.Request, res: *httpz.Response) !void {
     try stmt.bindInt(6, expires);
     try stmt.bindInt(7, now);
     try stmt.exec();
+
+    recordAudit(req, user, "create_session", "auth", null, a.db.lastInsertRowId(), "browser session created");
 
     try res.json(.{
         .token = token,
@@ -2695,6 +3705,8 @@ pub fn handleUpdateInstructions(req: *httpz.Request, res: *httpz.Response) !void
     try stmt.bindInt(3, now);
     try stmt.bindInt(4, user.id);
     try stmt.exec();
+
+    recordAudit(req, user, "update_instructions", "instructions", access.project_id, access.project_id, "instructions updated");
 
     try res.json(.{ .ok = true }, .{});
 }
@@ -2872,14 +3884,17 @@ pub fn handleCreateComment(req: *httpz.Request, res: *httpz.Response) !void {
         try stmt2.bindNull(13);
     }
     if (std.mem.eql(u8, comment_type, "suggestion")) {
-        try stmt2.bindText(14, "pending");
+    try stmt2.bindText(14, "pending");
     } else {
         try stmt2.bindNull(14);
     }
     try stmt2.exec();
+    const comment_id = a.db.lastInsertRowId();
+
+    recordAudit(req, user, "create_comment", "comment", access.project_id, comment_id, content);
 
     res.status = 201;
-    try res.json(.{ .ok = true, .id = a.db.lastInsertRowId() }, .{});
+    try res.json(.{ .ok = true, .id = comment_id }, .{});
 }
 
 /// DELETE /api/projects/:project_id/comments/:comment_id
@@ -2901,6 +3916,8 @@ pub fn handleDeleteComment(req: *httpz.Request, res: *httpz.Response) !void {
     try del_stmt.bindInt(2, comment_id);
     try del_stmt.bindInt(3, access.project_id);
     try del_stmt.exec();
+
+    recordAudit(req, user, "delete_comment", "comment", access.project_id, comment_id, "comment deleted");
 
     try res.json(.{ .ok = true }, .{});
 }
@@ -2925,6 +3942,8 @@ pub fn handleAcceptSuggestion(req: *httpz.Request, res: *httpz.Response) !void {
     try acc_stmt.bindInt(3, access.project_id);
     try acc_stmt.exec();
 
+    recordAudit(req, user, "accept_suggestion", "comment", access.project_id, comment_id, "suggestion accepted");
+
     try res.json(.{ .ok = true }, .{});
 }
 
@@ -2947,6 +3966,8 @@ pub fn handleRejectSuggestion(req: *httpz.Request, res: *httpz.Response) !void {
     try rej_stmt.bindInt(2, comment_id);
     try rej_stmt.bindInt(3, access.project_id);
     try rej_stmt.exec();
+
+    recordAudit(req, user, "reject_suggestion", "comment", access.project_id, comment_id, "suggestion rejected");
 
     try res.json(.{ .ok = true }, .{});
 }

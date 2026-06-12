@@ -70,12 +70,16 @@ pub fn handleUpgrade(req: *httpz.Request, res: *httpz.Response) !void {
     defer if (user.last_name) |ln| a.allocator.free(ln);
     defer if (user.username) |un| a.allocator.free(un);
 
-    // Check user has access to project
-    const is_member = db_projects.isMember(&a.db, project_id, user.id) catch false;
+    // Check user has access to project through explicit membership.
+    const project = db_projects.getById(a.allocator, &a.db, project_id) catch null;
+    const has_access = if (project) |_| blk: {
+        if (user.is_admin) break :blk true;
+        break :blk db_projects.isMember(&a.db, project_id, user.id) catch false;
+    } else false;
 
-    if (!is_member) {
+    if (!has_access) {
         res.status = 403;
-        res.body = "{\"error\":\"Not a project member\"}";
+        res.body = "{\"error\":\"Project access denied\"}";
         return;
     }
 

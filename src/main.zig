@@ -25,6 +25,12 @@ pub fn main() !void {
     };
     try config.validate();
 
+    // Refuse to boot in an unsafe configuration: dev-mode auth bypass must never be on in prod.
+    if (config.is_production and config.allow_dev_mode) {
+        std.log.err("ALLOW_DEV_MODE must not be enabled in production (it bypasses Mini App auth). Refusing to start.", .{});
+        return error.UnsafeDevModeInProduction;
+    }
+
     // 2. Ensure data directories exist
     storage.ensureDirectories(config.data_dir) catch |err| {
         std.log.err("Failed to create data directories: {}", .{err});
@@ -88,6 +94,13 @@ pub fn main() !void {
         .redis = redis,
     };
 
+    handler.recoverPendingTranslations() catch |err| {
+        std.log.err("Failed to recover pending translations: {}", .{err});
+    };
+
+    // Single background poll loop for durable retries (waiting_credits / external_timeout_pending).
+    handler.startRetryPollLoop();
+
     // 9. Configure and start HTTP server
     var server = try httpz.Server(void).init(allocator, .{
         .port = config.port,
@@ -111,47 +124,54 @@ pub fn main() !void {
 
     // Health check
     router.get("/health", handler.handleHealth, .{});
+    router.head("/health", serveHeadOk, .{});
 
     // Web login page (Telegram OAuth)
     router.get("/login", serveLogin, .{});
+    router.head("/login", serveHeadOk, .{});
     router.get("/auth/telegram", telegram_oauth.handleTelegramAuth, .{});
 
     // Mini App static files (compiled into binary via @embedFile)
     router.get("/", serveIndex, .{}); // Root also serves app
     router.get("/app", serveIndex, .{});
+    router.head("/", serveHeadOk, .{});
+    router.head("/app", serveHeadOk, .{});
     router.get("/app/app.css", serveCSS, .{});
     router.get("/app/app.js", serveAppJS, .{});
     router.get("/app/lib/api-client.js", serveApiClientJS, .{});
-    router.get("/app/lib/optimistic.js", serveOptimisticJS, .{});
-    router.get("/app/lib/history.js", serveHistoryJS, .{});
-    router.get("/app/components/projects.js", serveProjectsJS, .{});
-    router.get("/app/components/files.js", serveFilesJS, .{});
-    router.get("/app/components/file-viewer.js", serveFileViewerJS, .{});
-    router.get("/app/components/team.js", serveTeamJS, .{});
-    router.get("/app/components/glossary.js", serveGlossaryJS, .{});
-    router.get("/app/components/pricing.js", servePricingJS, .{});
-    router.get("/app/components/messages.js", serveMessagesJS, .{});
-    router.get("/app/components/glossary-versions.js", serveGlossaryVersionsJS, .{});
-    router.get("/app/components/settings.js", serveSettingsJS, .{});
-    router.get("/app/components/search.js", serveSearchJS, .{});
-    router.get("/app/components/comments.js", serveCommentsJS, .{});
-    router.get("/app/components/git-versioning.js", serveGitVersioningJS, .{});
     router.get("/app/lib/auth.js", serveAuthJS, .{});
-    router.get("/app/lib/roles.js", serveRolesJS, .{});
-    router.get("/app/lib/dragdrop.js", serveDragDropJS, .{});
-    router.get("/app/lib/diff-viewer.js", serveDiffViewerJS, .{});
-    router.get("/app/lib/file-stats.js", serveFileStatsJS, .{});
-    router.get("/app/lib/onboarding.js", serveOnboardingJS, .{});
-    router.get("/app/components/inbox.js", serveInboxJS, .{});
-    router.get("/app/components/instructions.js", serveInstructionsJS, .{});
-    router.get("/app/components/workflow-bar.js", serveWorkflowBarJS, .{});
     router.get("/app/lib/icons.js", serveIconsJS, .{});
     router.get("/app/lib/transitions.js", serveTransitionsJS, .{});
     router.get("/app/components/sidebar.js", serveSidebarJS, .{});
-    router.get("/app/components/upload-wizard.js", serveUploadWizardJS, .{});
+    router.get("/app/components/projects.js", serveProjectsJS, .{});
+    router.get("/app/components/comments.js", serveCommentsJS, .{});
+    router.get("/app/components/file-viewer.js", serveFileViewerJS, .{});
+    router.get("/app/components/files.js", serveFilesJS, .{});
+    router.get("/app/components/pricing.js", servePricingJS, .{});
+    router.get("/app/components/team.js", serveTeamJS, .{});
+    router.get("/app/components/guide.js", serveGuideJS, .{});
+    router.get("/app/components/audit.js", serveAuditJS, .{});
+    router.get("/app/components/admin.js", serveAdminJS, .{});
+    router.head("/app/app.css", serveHeadOk, .{});
+    router.head("/app/app.js", serveHeadOk, .{});
+    router.head("/app/lib/api-client.js", serveHeadOk, .{});
+    router.head("/app/lib/auth.js", serveHeadOk, .{});
+    router.head("/app/lib/icons.js", serveHeadOk, .{});
+    router.head("/app/lib/transitions.js", serveHeadOk, .{});
+    router.head("/app/components/sidebar.js", serveHeadOk, .{});
+    router.head("/app/components/projects.js", serveHeadOk, .{});
+    router.head("/app/components/comments.js", serveHeadOk, .{});
+    router.head("/app/components/file-viewer.js", serveHeadOk, .{});
+    router.head("/app/components/files.js", serveHeadOk, .{});
+    router.head("/app/components/pricing.js", serveHeadOk, .{});
+    router.head("/app/components/team.js", serveHeadOk, .{});
+    router.head("/app/components/guide.js", serveHeadOk, .{});
+    router.head("/app/components/audit.js", serveHeadOk, .{});
+    router.head("/app/components/admin.js", serveHeadOk, .{});
 
     // REST API for Mini App
     router.get("/api/health", handler.handleHealth, .{});
+    router.head("/api/health", serveHeadOk, .{});
 
     // Authentication endpoints
     router.post("/api/auth/session", miniapp_api.handleCreateSession, .{});
@@ -182,9 +202,13 @@ pub fn main() !void {
     router.post("/api/projects/:project_id/glossary/import", miniapp_api.handleImportGlossary, .{});
     router.get("/api/projects/:project_id/messages", miniapp_api.handleMessages, .{});
     router.post("/api/projects/:project_id/messages", miniapp_api.handleSendMessage, .{});
+    router.get("/api/translation/options", miniapp_api.handleTranslationOptions, .{});
     router.get("/api/projects/:project_id/pricing", miniapp_api.handlePricing, .{});
     router.get("/api/projects/:project_id/invoices", miniapp_api.handleListInvoices, .{});
     router.post("/api/projects/:project_id/invoices", miniapp_api.handleCreateInvoice, .{});
+    router.get("/api/projects/:project_id/audit", miniapp_api.handleProjectAudit, .{});
+    router.get("/api/admin/audit", miniapp_api.handleAdminAudit, .{});
+    router.get("/api/admin/status", miniapp_api.handleAdminStatus, .{});
     router.get("/api/projects/:project_id/glossary/versions", miniapp_api.handleListGlossaryVersions, .{});
     router.get("/api/projects/:project_id/glossary/versions/:version_id", miniapp_api.handleGetGlossaryVersion, .{});
     router.get("/api/projects/:project_id/glossary/diff", miniapp_api.handleGlossaryDiff, .{});
@@ -211,6 +235,9 @@ fn serveIndex(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "text/html; charset=utf-8");
     res.body = @embedFile("web/index.html");
+}
+fn serveHeadOk(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
 }
 fn serveCSS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
@@ -247,10 +274,25 @@ fn serveTeamJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.header("Content-Type", "application/javascript; charset=utf-8");
     res.body = @embedFile("web/components/team.js");
 }
+fn serveGuideJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/guide.js");
+}
+fn serveAuditJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/audit.js");
+}
+fn serveAdminJS(_: *httpz.Request, res: *httpz.Response) !void {
+    res.status = 200;
+    res.header("Content-Type", "application/javascript; charset=utf-8");
+    res.body = @embedFile("web/components/admin.js");
+}
 fn serveGlossaryJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/components/glossary.js");
+    res.body = @embedFile("web/legacy-flow/components/glossary.js");
 }
 fn servePricingJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
@@ -260,17 +302,17 @@ fn servePricingJS(_: *httpz.Request, res: *httpz.Response) !void {
 fn serveMessagesJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/components/messages.js");
+    res.body = @embedFile("web/legacy-flow/components/messages.js");
 }
 fn serveGlossaryVersionsJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/components/glossary-versions.js");
+    res.body = @embedFile("web/legacy-flow/components/glossary-versions.js");
 }
 fn serveSettingsJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/components/settings.js");
+    res.body = @embedFile("web/legacy-flow/components/settings.js");
 }
 fn serveAuthJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
@@ -280,12 +322,12 @@ fn serveAuthJS(_: *httpz.Request, res: *httpz.Response) !void {
 fn serveOptimisticJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/lib/optimistic.js");
+    res.body = @embedFile("web/legacy-flow/lib/optimistic.js");
 }
 fn serveHistoryJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/lib/history.js");
+    res.body = @embedFile("web/legacy-flow/lib/history.js");
 }
 fn serveLogin(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
@@ -315,7 +357,30 @@ fn handleVerifySession(req: *httpz.Request, res: *httpz.Response) !void {
     };
 
     if (user_id) |uid| {
-        try res.json(.{ .valid = true, .user_id = uid }, .{});
+        var stmt = try a.db.prepare(
+            "SELECT telegram_id, COALESCE(username, ''), COALESCE(first_name, ''), COALESCE(last_name, ''), is_admin FROM users WHERE id = ?",
+        );
+        defer stmt.deinit();
+        try stmt.bindInt(1, uid);
+
+        if (try stmt.step()) {
+            const telegram_id = stmt.columnInt(0);
+            const is_admin = stmt.columnInt(4) == 1 or telegram_id == a.config.admin_chat_id;
+            try res.json(.{
+                .valid = true,
+                .user_id = uid,
+                .user = .{
+                    .id = uid,
+                    .telegram_id = telegram_id,
+                    .username = stmt.columnText(1),
+                    .first_name = stmt.columnText(2),
+                    .last_name = stmt.columnText(3),
+                    .is_admin = is_admin,
+                },
+            }, .{});
+        } else {
+            try res.json(.{ .valid = false }, .{});
+        }
     } else {
         try res.json(.{ .valid = false }, .{});
     }
@@ -323,7 +388,7 @@ fn handleVerifySession(req: *httpz.Request, res: *httpz.Response) !void {
 fn serveSearchJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/components/search.js");
+    res.body = @embedFile("web/legacy-flow/components/search.js");
 }
 fn serveCommentsJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
@@ -333,47 +398,47 @@ fn serveCommentsJS(_: *httpz.Request, res: *httpz.Response) !void {
 fn serveGitVersioningJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/components/git-versioning.js");
+    res.body = @embedFile("web/legacy-flow/components/git-versioning.js");
 }
 fn serveRolesJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/lib/roles.js");
+    res.body = @embedFile("web/legacy-flow/lib/roles.js");
 }
 fn serveDragDropJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/lib/dragdrop.js");
+    res.body = @embedFile("web/legacy-flow/lib/dragdrop.js");
 }
 fn serveDiffViewerJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/lib/diff-viewer.js");
+    res.body = @embedFile("web/legacy-flow/lib/diff-viewer.js");
 }
 fn serveFileStatsJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/lib/file-stats.js");
+    res.body = @embedFile("web/legacy-flow/lib/file-stats.js");
 }
 fn serveOnboardingJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/lib/onboarding.js");
+    res.body = @embedFile("web/legacy-flow/lib/onboarding.js");
 }
 fn serveInboxJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/components/inbox.js");
+    res.body = @embedFile("web/legacy-flow/components/inbox.js");
 }
 fn serveInstructionsJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/components/instructions.js");
+    res.body = @embedFile("web/legacy-flow/components/instructions.js");
 }
 fn serveWorkflowBarJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/components/workflow-bar.js");
+    res.body = @embedFile("web/legacy-flow/components/workflow-bar.js");
 }
 fn serveIconsJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
@@ -393,5 +458,5 @@ fn serveSidebarJS(_: *httpz.Request, res: *httpz.Response) !void {
 fn serveUploadWizardJS(_: *httpz.Request, res: *httpz.Response) !void {
     res.status = 200;
     res.header("Content-Type", "application/javascript; charset=utf-8");
-    res.body = @embedFile("web/components/upload-wizard.js");
+    res.body = @embedFile("web/legacy-flow/components/upload-wizard.js");
 }
