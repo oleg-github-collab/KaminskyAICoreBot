@@ -13,7 +13,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,27 +28,37 @@ jobs:
 
       - name: Deploy repository
         run: |
-          rsync -az --delete \
-            --exclude='.git/' \
-            --exclude='.env' \
-            --exclude='zig-cache/' \
-            --exclude='zig-out/' \
-            --exclude='node_modules/' \
-            --exclude='PLAN.md' \
-            --exclude='STRATEGIC_PLAN.md' \
-            -e "ssh -i ~/.ssh/hetzner_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=45 -o ConnectionAttempts=3" \
-            ./ root@5.78.181.203:/opt/translatorbot/repo/
+          ssh_cmd="ssh -i ~/.ssh/hetzner_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=45 -o ConnectionAttempts=1"
+          for attempt in $(seq 1 20); do
+            echo "rsync attempt ${attempt}/20"
+            if rsync -az --delete \
+              --exclude='.git/' \
+              --exclude='.env' \
+              --exclude='zig-cache/' \
+              --exclude='zig-out/' \
+              --exclude='node_modules/' \
+              --exclude='PLAN.md' \
+              --exclude='STRATEGIC_PLAN.md' \
+              -e "$ssh_cmd" \
+              ./ root@5.78.181.203:/opt/translatorbot/repo/; then
+              exit 0
+            fi
+            sleep 60
+          done
+          exit 1
 
       - name: Rebuild and restart app
         run: |
-          ssh -i ~/.ssh/hetzner_deploy \
-            -o IdentitiesOnly=yes \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=accept-new \
-            -o ConnectTimeout=45 \
-            -o ConnectionAttempts=3 \
-            root@5.78.181.203 \
-            'cd /opt/translatorbot && docker compose build app && docker compose up -d app && docker compose ps'
+          ssh_cmd="ssh -i ~/.ssh/hetzner_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=45 -o ConnectionAttempts=1"
+          for attempt in $(seq 1 20); do
+            echo "restart attempt ${attempt}/20"
+            if $ssh_cmd root@5.78.181.203 \
+              'cd /opt/translatorbot && docker compose build app && docker compose up -d app && docker compose ps'; then
+              exit 0
+            fi
+            sleep 60
+          done
+          exit 1
 
       - name: Smoke test
         run: |
