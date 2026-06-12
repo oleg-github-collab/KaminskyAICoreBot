@@ -1,48 +1,7 @@
 const ProjectsView = {
-    languages: [
-        'German', 'Ukrainian', 'English', 'Polish', 'French', 'Spanish',
-        'Italian', 'Dutch', 'Czech', 'Slovak', 'Romanian', 'Russian'
-    ],
-    languageFlags: {
-        German: '🇩🇪',
-        Ukrainian: '🇺🇦',
-        English: '🇬🇧',
-        Polish: '🇵🇱',
-        French: '🇫🇷',
-        Spanish: '🇪🇸',
-        Italian: '🇮🇹',
-        Dutch: '🇳🇱',
-        Czech: '🇨🇿',
-        Slovak: '🇸🇰',
-        Romanian: '🇷🇴',
-        Russian: '🇷🇺',
-        Portuguese: '🇵🇹',
-        Swedish: '🇸🇪',
-        Danish: '🇩🇰',
-        Finnish: '🇫🇮',
-        Norwegian: '🇳🇴',
-        Turkish: '🇹🇷',
-        Greek: '🇬🇷',
-        Bulgarian: '🇧🇬',
-        Hungarian: '🇭🇺',
-        Estonian: '🇪🇪',
-        Latvian: '🇱🇻',
-        Lithuanian: '🇱🇹',
-        Slovenian: '🇸🇮',
-        Croatian: '🇭🇷',
-        Serbian: '🇷🇸',
-        Arabic: '🇸🇦',
-        Hebrew: '🇮🇱',
-        Japanese: '🇯🇵',
-        Korean: '🇰🇷',
-        Chinese: '🇨🇳',
-        'Simplified Chinese': '🇨🇳',
-        'Traditional Chinese': '🇹🇼',
-        Hindi: '🇮🇳',
-        Indonesian: '🇮🇩',
-        Vietnamese: '🇻🇳',
-        Thai: '🇹🇭'
-    },
+    languages: window.LanguageMeta
+        ? window.LanguageMeta.defaults()
+        : ['German', 'Ukrainian', 'English', 'Polish', 'French', 'Spanish', 'Italian', 'Dutch'],
     optionsLoaded: false,
 
     async render(c) {
@@ -92,12 +51,13 @@ const ProjectsView = {
                     </div>`;
             } else {
                 html += projects.map(p => {
-                    const desc = p.description || (p.source_lang && p.target_lang ? p.source_lang + ' \u2192 ' + p.target_lang : '');
+                    const desc = p.description || '';
                     return `
                     <div class="card project-card" style="cursor:pointer" onclick='ProjectsView.select(${JSON.stringify(p).replace(/'/g, "\\'")})'>
                         <div class="project-card-top">
                             <div class="project-card-info">
                                 <div class="card-title">${App.esc(p.name)}</div>
+                                ${this.renderProjectRoute(p.source_lang, p.target_lang)}
                                 ${desc ? `<div class="card-sub">${App.esc(desc)}</div>` : ''}
                             </div>
                             <span class="card-badge">${App.esc(p.role)}</span>
@@ -125,12 +85,51 @@ const ProjectsView = {
 
     renderLanguageOptions(selected) {
         return this.languages.map(lang =>
-            `<option value="${App.esc(lang)}"${lang === selected ? ' selected' : ''}>${this.languageFlag(lang)} ${App.esc(lang)}</option>`
+            `<option value="${App.esc(lang)}"${lang === selected ? ' selected' : ''}>${App.esc(this.languageOptionLabel(lang))}</option>`
         ).join('');
     },
 
     languageFlag(lang) {
-        return this.languageFlags[String(lang || '').trim()] || '🏳️';
+        return window.LanguageMeta ? window.LanguageMeta.flag(lang) : '🌐';
+    },
+
+    languageOptionLabel(lang) {
+        return window.LanguageMeta ? window.LanguageMeta.optionLabel(lang) : String(lang || '');
+    },
+
+    languageInfo(lang) {
+        return window.LanguageMeta
+            ? window.LanguageMeta.info(lang)
+            : { name: String(lang || 'Language'), nativeName: '', flag: '🌐' };
+    },
+
+    renderLanguageChip(lang) {
+        const info = this.languageInfo(lang);
+        const native = info.nativeName && info.nativeName !== info.name
+            ? `<span class="language-native">${App.esc(info.nativeName)}</span>`
+            : '';
+        return `
+            <span class="language-mini-chip">
+                <span class="language-flag" aria-hidden="true">${App.esc(info.flag)}</span>
+                <span class="language-name">${App.esc(info.name)}</span>
+                ${native}
+            </span>`;
+    },
+
+    renderProjectRoute(source, targetRaw) {
+        if (!source && !targetRaw) return '';
+        const targets = String(targetRaw || '')
+            .split(',')
+            .map(item => item.trim())
+            .filter(Boolean);
+        return `
+            <div class="project-language-route">
+                ${source ? this.renderLanguageChip(source) : ''}
+                ${source && targets.length ? '<span class="project-language-arrow">→</span>' : ''}
+                <span class="project-language-targets">
+                    ${targets.length ? targets.map(lang => this.renderLanguageChip(lang)).join('') : ''}
+                </span>
+            </div>`;
     },
 
     async loadOptions() {

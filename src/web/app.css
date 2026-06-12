@@ -1501,6 +1501,7 @@ select.input:focus {
 .language-route-pill {
     display: inline-flex;
     align-items: center;
+    gap: 7px;
     min-height: 36px;
     max-width: 100%;
     padding: 7px 10px;
@@ -1563,6 +1564,54 @@ select.input:focus {
     font-size: 17px;
     line-height: 1;
 }
+.language-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.language-native {
+    min-width: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.language-mini-chip {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    max-width: 100%;
+    gap: 7px;
+    padding: 5px 8px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    background: var(--bg-surface-2);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 800;
+}
+.project-language-route {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 7px;
+}
+.project-language-targets {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+.project-language-arrow {
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 900;
+}
 .target-chip-status {
     display: inline-flex;
     align-items: center;
@@ -1591,6 +1640,40 @@ select.input:focus {
 	    color: var(--text-primary);
 	    font-size: 13px;
 	}
+.upload-status-title {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    gap: 8px;
+}
+.upload-status-title span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.upload-status-spinner,
+.upload-badge-spinner,
+.upload-live-spinner {
+    display: inline-block;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    animation: spin .75s linear infinite;
+}
+.upload-status-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(79,140,255,0.22);
+    border-top-color: var(--blue);
+    border-right-color: var(--green);
+}
+.upload-badge-spinner {
+    width: 12px;
+    height: 12px;
+    margin-right: 6px;
+    border: 2px solid rgba(79,140,255,0.2);
+    border-top-color: currentColor;
+}
 	.upload-progress-top span {
 	    color: var(--info-text);
 	    font-size: 12px;
@@ -1601,6 +1684,56 @@ select.input:focus {
 	    margin: 0;
 	    background: rgba(79,140,255,0.18);
 	}
+.upload-progress-bar.is-counting span {
+    background: linear-gradient(90deg, var(--blue), var(--green), var(--blue));
+    background-size: 220% 100%;
+    animation: uploadScan 1.15s linear infinite;
+}
+.upload-live-banner {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 11px;
+    align-items: center;
+    margin-top: 10px;
+    padding: 10px 11px;
+    border: 1px solid rgba(79,140,255,0.22);
+    border-radius: 8px;
+    background: rgba(79,140,255,0.09);
+}
+.upload-live-spinner {
+    width: 26px;
+    height: 26px;
+    border: 3px solid rgba(79,140,255,0.22);
+    border-top-color: var(--blue);
+    border-right-color: var(--green);
+    box-shadow: 0 0 0 4px rgba(79,140,255,0.06);
+}
+.upload-live-copy {
+    min-width: 0;
+}
+.upload-live-title {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 850;
+}
+.upload-live-text {
+    margin-top: 2px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+.upload-live-time {
+    min-width: 44px;
+    padding: 4px 7px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.06);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 850;
+    text-align: center;
+}
 .upload-file-progress-list {
     display: grid;
     gap: 8px;
@@ -1622,6 +1755,10 @@ select.input:focus {
 .upload-file-progress-row.error {
     border-color: rgba(239,68,68,0.32);
     background: rgba(239,68,68,0.08);
+}
+.upload-file-progress-row.analyzing {
+    border-color: rgba(79,140,255,0.24);
+    background: rgba(79,140,255,0.07);
 }
 .upload-file-progress-main {
     min-width: 0;
@@ -1657,6 +1794,8 @@ select.input:focus {
 }
 .upload-file-progress-row.analyzing .upload-file-progress-mini span {
     background: linear-gradient(90deg, var(--blue), var(--green));
+    background-size: 220% 100%;
+    animation: uploadScan 1.15s linear infinite;
 }
 .upload-file-progress-row.done .upload-file-progress-mini span {
     background: var(--green);
@@ -1690,6 +1829,19 @@ select.input:focus {
 .upload-file-progress-row.error .upload-file-progress-badge {
     color: var(--error-text);
     background: var(--error-bg);
+}
+@keyframes uploadScan {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 220% 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .upload-status-spinner,
+    .upload-badge-spinner,
+    .upload-live-spinner,
+    .upload-progress-bar.is-counting span,
+    .upload-file-progress-row.analyzing .upload-file-progress-mini span {
+        animation: none;
+    }
 }
 .order-actions {
     display: flex;
@@ -4409,6 +4561,16 @@ mark {
     .upload-progress-top span {
         white-space: normal;
     }
+    .upload-status-title span:last-child {
+        white-space: normal;
+    }
+    .upload-live-banner {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+    .upload-live-time {
+        grid-column: 2;
+        width: max-content;
+    }
     .upload-file-progress-row {
         grid-template-columns: 1fr;
         gap: 8px;
@@ -4583,6 +4745,17 @@ mark {
 	        justify-content: space-between;
 	        padding: 10px 12px;
 	        font-size: 15px;
+	    }
+	    .language-name,
+	    .language-native {
+	        white-space: normal;
+	    }
+	    .language-mini-chip {
+	        max-width: 100%;
+	    }
+	    .project-language-route,
+	    .project-language-targets {
+	        width: 100%;
 	    }
 	    .order-actions,
 	    .order-actions.split {

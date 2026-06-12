@@ -1,49 +1,6 @@
-const ORDER_LANGUAGES = [
-    'German', 'Ukrainian', 'English', 'Polish', 'French', 'Spanish',
-    'Italian', 'Dutch', 'Czech', 'Slovak', 'Romanian', 'Russian',
-    'Portuguese', 'Swedish', 'Danish', 'Finnish'
-];
-
-const LANGUAGE_FLAGS = {
-    German: '🇩🇪',
-    Ukrainian: '🇺🇦',
-    English: '🇬🇧',
-    Polish: '🇵🇱',
-    French: '🇫🇷',
-    Spanish: '🇪🇸',
-    Italian: '🇮🇹',
-    Dutch: '🇳🇱',
-    Czech: '🇨🇿',
-    Slovak: '🇸🇰',
-    Romanian: '🇷🇴',
-    Russian: '🇷🇺',
-    Portuguese: '🇵🇹',
-    Swedish: '🇸🇪',
-    Danish: '🇩🇰',
-    Finnish: '🇫🇮',
-    Norwegian: '🇳🇴',
-    Turkish: '🇹🇷',
-    Greek: '🇬🇷',
-    Bulgarian: '🇧🇬',
-    Hungarian: '🇭🇺',
-    Estonian: '🇪🇪',
-    Latvian: '🇱🇻',
-    Lithuanian: '🇱🇹',
-    Slovenian: '🇸🇮',
-    Croatian: '🇭🇷',
-    Serbian: '🇷🇸',
-    Arabic: '🇸🇦',
-    Hebrew: '🇮🇱',
-    Japanese: '🇯🇵',
-    Korean: '🇰🇷',
-    Chinese: '🇨🇳',
-    'Simplified Chinese': '🇨🇳',
-    'Traditional Chinese': '🇹🇼',
-    Hindi: '🇮🇳',
-    Indonesian: '🇮🇩',
-    Vietnamese: '🇻🇳',
-    Thai: '🇹🇭'
-};
+const ORDER_LANGUAGES = window.LanguageMeta
+    ? window.LanguageMeta.defaults()
+    : ['German', 'Ukrainian', 'English', 'Polish', 'French', 'Spanish', 'Italian', 'Dutch'];
 
 const PricingView = {
     pricingData: null,
@@ -206,7 +163,7 @@ const PricingView = {
                 <div class="language-route-card">
                     <div class="language-route-source">
                         <span class="language-route-label">Оригінал</span>
-                        <span class="language-route-pill">${this.languageFlag(source)} ${App.esc(source)}</span>
+                        <span class="language-route-pill">${this.renderLanguageFace(source)}</span>
                     </div>
                     <div class="language-route-arrow">→</div>
                     <div class="language-route-targets">
@@ -505,8 +462,7 @@ const PricingView = {
         return `
             <button class="target-chip${removable ? '' : ' locked'}" ${removable ? '' : 'disabled'} onclick="PricingView.removeTargetLanguage('${this.inlineArg(lang)}')" aria-label="Мова перекладу: ${App.esc(lang)}">
                 <span class="target-chip-main">
-                    <span class="language-flag" aria-hidden="true">${this.languageFlag(lang)}</span>
-                    <span>${App.esc(lang)}</span>
+                    ${this.renderLanguageFace(lang)}
                 </span>
                 <span class="target-chip-status">${removable ? Icons.wrap('close', 14) : 'Додано'}</span>
             </button>`;
@@ -520,11 +476,32 @@ const PricingView = {
             seen.add(v);
             return true;
         });
-        return values.map(lang => `<option value="${App.esc(lang)}"${lang === selected ? ' selected' : ''}>${this.languageFlag(lang)} ${App.esc(lang)}</option>`).join('');
+        return values.map(lang => `<option value="${App.esc(lang)}"${lang === selected ? ' selected' : ''}>${App.esc(this.languageOptionLabel(lang))}</option>`).join('');
     },
 
     languageFlag(lang) {
-        return LANGUAGE_FLAGS[String(lang || '').trim()] || '🏳️';
+        return window.LanguageMeta ? window.LanguageMeta.flag(lang) : '🌐';
+    },
+
+    languageOptionLabel(lang) {
+        return window.LanguageMeta ? window.LanguageMeta.optionLabel(lang) : String(lang || '');
+    },
+
+    languageInfo(lang) {
+        return window.LanguageMeta
+            ? window.LanguageMeta.info(lang)
+            : { name: String(lang || 'Language'), nativeName: '', flag: '🌐' };
+    },
+
+    renderLanguageFace(lang) {
+        const info = this.languageInfo(lang);
+        const native = info.nativeName && info.nativeName !== info.name
+            ? `<span class="language-native">${App.esc(info.nativeName)}</span>`
+            : '';
+        return `
+            <span class="language-flag" aria-hidden="true">${App.esc(info.flag)}</span>
+            <span class="language-name">${App.esc(info.name)}</span>
+            ${native}`;
     },
 
     inlineArg(value) {
@@ -707,16 +684,37 @@ const PricingView = {
         const done = state.completed || 0;
         const failed = state.failed || 0;
         const pct = Math.max(0, Math.min(100, Math.round(state.aggregatePercent || 0)));
+        const analyzing = files.filter(file => file.status === 'analyzing');
         const fileWord = safeTotal === 1 ? 'файл' : 'файлів';
         const active = state.activeFileName ? ` · ${state.activeFileName}` : '';
         return `
             <div class="upload-progress-top">
-                <strong>${App.esc((state.phaseLabel || 'Обробка') + active)}</strong>
+                <strong class="upload-status-title">
+                    ${analyzing.length ? '<span class="upload-status-spinner" aria-hidden="true"></span>' : ''}
+                    <span>${App.esc((state.phaseLabel || 'Обробка') + active)}</span>
+                </strong>
                 <span>${done}/${safeTotal} ${fileWord}${failed ? ' · ' + failed + ' пом.' : ''}</span>
             </div>
-            <div class="job-progress upload-progress-bar"><span style="width:${pct}%"></span></div>
+            <div class="job-progress upload-progress-bar${analyzing.length ? ' is-counting' : ''}"><span style="width:${pct}%"></span></div>
+            ${analyzing.length ? this.renderCountingLive(analyzing, safeTotal) : ''}
             <div class="upload-file-progress-list">
                 ${files.map(file => this.uploadFileRow(file)).join('')}
+            </div>`;
+    },
+
+    renderCountingLive(files, total) {
+        const elapsed = Math.max(...files.map(file => file.elapsedMs || 0), 0);
+        const fileLabel = files.length === 1
+            ? App.esc(files[0].name || 'файл')
+            : `${files.length}/${total} файлів`;
+        return `
+            <div class="upload-live-banner" role="status" aria-live="polite">
+                <span class="upload-live-spinner" aria-hidden="true"></span>
+                <div class="upload-live-copy">
+                    <div class="upload-live-title">Рахуємо символи, сторінки і вартість</div>
+                    <div class="upload-live-text">${fileLabel} вже на сервері. Результат зʼявиться автоматично.</div>
+                </div>
+                <span class="upload-live-time">${this.formatDuration(elapsed)}</span>
             </div>`;
     },
 
@@ -724,14 +722,18 @@ const PricingView = {
         const pct = Math.max(0, Math.min(100, Math.round(file.uploadPercent || 0)));
         const status = file.status || 'queued';
         const phase = file.error || file.phase || this.uploadPhaseLabel(status);
+        const width = status === 'done' || status === 'error' || status === 'analyzing' ? 100 : pct;
         return `
             <div class="upload-file-progress-row ${status}">
                 <div class="upload-file-progress-main">
                     <div class="upload-file-progress-name">${App.esc(file.name || 'Файл')}</div>
                     <div class="upload-file-progress-phase">${App.esc(phase)}${file.size ? ' · ' + App.fmtSize(file.size) : ''}</div>
-                    <div class="upload-file-progress-mini"><span style="width:${status === 'done' || status === 'error' ? 100 : pct}%"></span></div>
+                    <div class="upload-file-progress-mini"><span style="width:${width}%"></span></div>
                 </div>
-                <span class="upload-file-progress-badge">${this.uploadPhaseLabel(status, pct)}</span>
+                <span class="upload-file-progress-badge">
+                    ${status === 'analyzing' ? '<span class="upload-badge-spinner" aria-hidden="true"></span>' : ''}
+                    ${this.uploadPhaseLabel(status, pct)}
+                </span>
             </div>`;
     },
 
@@ -744,6 +746,13 @@ const PricingView = {
             error: 'Помилка'
         };
         return map[status] || 'Обробка';
+    },
+
+    formatDuration(ms) {
+        const totalSeconds = Math.max(0, Math.floor((ms || 0) / 1000));
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `${minutes}:${String(seconds).padStart(2, '0')}`;
     },
 
     async pay(pid) {
