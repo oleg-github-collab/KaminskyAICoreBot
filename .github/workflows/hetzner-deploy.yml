@@ -1,0 +1,88 @@
+name: Hetzner Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hetzner-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$HETZNER_SSH_KEY" > ~/.ssh/hetzner_deploy
+          chmod 600 ~/.ssh/hetzner_deploy
+        env:
+          HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+
+      - name: Deploy repository
+        run: |
+          rsync -az --delete \
+            --exclude='.git/' \
+            --exclude='.env' \
+            --exclude='zig-cache/' \
+            --exclude='zig-out/' \
+            --exclude='node_modules/' \
+            --exclude='PLAN.md' \
+            --exclude='STRATEGIC_PLAN.md' \
+            -e "ssh -i ~/.ssh/hetzner_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=45 -o ConnectionAttempts=3" \
+            ./ root@5.78.181.203:/opt/translatorbot/repo/
+
+      - name: Rebuild and restart app
+        run: |
+          ssh -i ~/.ssh/hetzner_deploy \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=45 \
+            -o ConnectionAttempts=3 \
+            root@5.78.181.203 \
+            'cd /opt/translatorbot && docker compose build app && docker compose up -d app && docker compose ps'
+
+      - name: Smoke test
+        run: |
+          python3 - <<'PY'
+          import sys, time, urllib.error, urllib.request
+
+          checks = [
+              ("health", "https://kaminskyi.chat/translatorbot/health", {200}),
+              ("app", "https://kaminskyi.chat/translatorbot/app", {200}),
+              ("api-client.js", "https://kaminskyi.chat/translatorbot/app/lib/api-client.js", {200}),
+              ("pricing.js", "https://kaminskyi.chat/translatorbot/app/components/pricing.js", {200}),
+              ("projects.js", "https://kaminskyi.chat/translatorbot/app/components/projects.js", {200}),
+              ("app.css", "https://kaminskyi.chat/translatorbot/app/app.css", {200}),
+              ("projects unauth", "https://kaminskyi.chat/translatorbot/api/projects", {401, 403}),
+          ]
+
+          failed = False
+          for name, url, expected in checks:
+              code = None
+              last = None
+              for _ in range(6):
+                  try:
+                      with urllib.request.urlopen(url, timeout=20) as response:
+                          code = response.getcode()
+                          break
+                  except urllib.error.HTTPError as exc:
+                      code = exc.code
+                      break
+                  except Exception as exc:
+                      last = exc
+                      time.sleep(5)
+              ok = code in expected
+              print(f"{name}: {code if code is not None else type(last).__name__} ({'OK' if ok else 'BAD'})")
+              failed = failed or not ok
+
+          sys.exit(1 if failed else 0)
+          PY
